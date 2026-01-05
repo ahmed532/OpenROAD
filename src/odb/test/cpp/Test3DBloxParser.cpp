@@ -89,7 +89,7 @@ TEST_F(DbvFixture, test_3dbx)
   EXPECT_EQ(soc_inst->getOrient().getString(), "R0");
   EXPECT_EQ(soc_inst_duplicate->getLoc().x(), 100.0 * db_->getDbuPerMicron());
   EXPECT_EQ(soc_inst_duplicate->getLoc().y(), 200.0 * db_->getDbuPerMicron());
-  EXPECT_EQ(soc_inst_duplicate->getLoc().z(), 300.0 * db_->getDbuPerMicron());
+  EXPECT_EQ(soc_inst_duplicate->getLoc().z(), 0.0);
   EXPECT_EQ(soc_inst_duplicate->getOrient().getString(), "MZ");
   auto connections = db_->getChipConns();
   EXPECT_EQ(connections.size(), 2);

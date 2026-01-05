@@ -265,6 +265,9 @@ void ThreeDBlox::createChiplet(const ChipletDef& chiplet)
 
   for (const auto& lef_file : chiplet.external.lef_files) {
     auto lib_name = getFileName(lef_file);
+    if (db_->findLib(lib_name.c_str()) != nullptr) {
+      continue;
+    }
     odb::lefin lef_reader(db_, logger_, false);
     lef_reader.createLib(tech, lib_name.c_str(), lef_file.c_str());
   }
@@ -486,9 +489,9 @@ void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
                    chip_inst.name);
   }
   inst->setOrient(orient.value());
-  inst->setLoc(Point3D(chip_inst.loc.x * db_->getDbuPerMicron(),
-                       chip_inst.loc.y * db_->getDbuPerMicron(),
-                       chip_inst.z * db_->getDbuPerMicron()));
+  const double u = db_->getDbuPerMicron();
+  inst->setLoc(
+      Point3D(chip_inst.loc.x * u, chip_inst.loc.y * u, chip_inst.z * u));
 }
 std::vector<std::string> splitPath(const std::string& path)
 {

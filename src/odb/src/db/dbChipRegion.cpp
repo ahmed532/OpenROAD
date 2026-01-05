@@ -135,15 +135,18 @@ dbSet<dbChipBump> dbChipRegion::getChipBumps() const
 
 // User Code Begin dbChipRegionPublicMethods
 
+// Returns the region's cuboid in the master chip's coordinate system.
+// Note: This differs from dbChipRegionInst::getCuboid() which returns
+// the transformed cuboid in the parent's coordinate system.
 Cuboid dbChipRegion::getCuboid() const
 {
   _dbChipRegion* obj = (_dbChipRegion*) this;
   Rect box = obj->box_;
   int z = 0;
   if (getSide() == dbChipRegion::Side::FRONT) {
-    z = getChip()->getThickness();
-  } else if (getSide() == dbChipRegion::Side::BACK) {
     z = 0;
+  } else if (getSide() == dbChipRegion::Side::BACK) {
+    z = getChip()->getThickness();
   } else {
     z = getChip()->getThickness() / 2;
   }
@@ -188,12 +191,12 @@ dbChipRegion* dbChipRegion::create(dbChip* chip,
   utl::Logger* logger = _chip->getImpl()->getLogger();
   if (layer != nullptr) {
     if (chip->getBlock() == nullptr) {
-      logger->error(
-          utl::ODB,
-          508,
-          "Cannot create chip region {} for chip {} because chip has no block",
-          name,
-          chip->getName());
+      logger->error(utl::ODB,
+                    508,
+                    "Cannot create chip region {} for chip {} because chip "
+                    "has no block",
+                    name,
+                    chip->getName());
     }
     if (chip->getBlock()->getTech() != layer->getTech()) {
       logger->error(utl::ODB,

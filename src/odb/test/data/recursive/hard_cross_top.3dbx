@@ -1,0 +1,34 @@
+
+Header:
+  version: "1.0"
+  unit: "micron"
+  precision: 2000
+  include:
+    - leaf.3dbv
+    - hard_cross_branchA.3dbx
+    - hard_cross_branchB.3dbx
+
+Design:
+  name: "HardCrossTop"
+
+ChipletInst:
+  branchA:
+    reference: HardCrossBranchA
+  branchB:
+    reference: HardCrossBranchB
+
+Stack:
+  branchA:
+    loc: [1000.0, 1000.0]
+    z: 0.0
+    orient: R0
+  branchB:
+    loc: [2000.0, 2000.0]
+    z: 0.0
+    orient: R0
+
+Connection:
+  cross_conn:
+    top: branchA/sub_inst/leaf_inst.regions.r1
+    bot: branchB/leaf_inst.regions.r1
+    thickness: 0.0
