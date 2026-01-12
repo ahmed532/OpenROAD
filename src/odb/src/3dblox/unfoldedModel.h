@@ -43,10 +43,13 @@ struct UnfoldedBump
 struct UnfoldedRegionFull : public UnfoldedRegion
 {
   std::deque<UnfoldedBump> bumps;
+  bool isUsed = false;
 
   int getSurfaceZ() const;
   bool isFacingUp() const;
   bool isFacingDown() const;
+  bool isInternal() const;
+  bool isInternalExt() const;
 };
 
 struct UnfoldedConnection
@@ -55,6 +58,8 @@ struct UnfoldedConnection
   UnfoldedRegionFull* top_region;
   UnfoldedRegionFull* bottom_region;
   Cuboid connection_cuboid;
+  bool is_bterm_connection = false;
+  dbBTerm* bterm = nullptr;
 
   bool isValid() const;
 };

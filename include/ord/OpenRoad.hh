@@ -227,7 +227,10 @@ class OpenRoad
   void write3Dbv(const std::string& filename);
   void write3Dbx(const std::string& filename);
   void read3DBloxBMap(const std::string& filename);
-  void check3DBlox();
+  void check3DBlox(int tolerance = 0,
+                   int bump_pitch_tolerance = 1,
+                   bool verbose = false,
+                   const std::string& report_file = "");
 
   void readDb(std::istream& stream);
   void readDb(const char* filename, bool hierarchy = false);

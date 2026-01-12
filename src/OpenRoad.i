@@ -377,10 +377,13 @@ read_3dblox_bmap_cmd(const char *filename)
 }
 
 void
-check_3dblox_cmd()
+check_3dblox_cmd(int tolerance = 0,
+                 int bump_pitch_tolerance = 1,
+                 bool verbose = false,
+                 const char* report_file = "")
 {
-  OpenRoad *ord = getOpenRoad();
-  ord->check3DBlox();
+  OpenRoad* ord = getOpenRoad();
+  ord->check3DBlox(tolerance, bump_pitch_tolerance, verbose, report_file);
 }
 
 void

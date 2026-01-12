@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include "odb/db.h"
 
 namespace odb {
@@ -14,7 +16,11 @@ class Checker
  public:
   Checker(utl::Logger* logger);
   ~Checker() = default;
-  void check(odb::dbChip* chip);
+  void check(odb::dbChip* chip,
+             int tolerance = 0,
+             int bump_pitch_tolerance = 1,
+             bool verbose = false,
+             const std::string& report_file = "");
 
  private:
   utl::Logger* logger_;

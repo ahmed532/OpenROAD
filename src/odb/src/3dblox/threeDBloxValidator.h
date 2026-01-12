@@ -15,7 +15,12 @@ class ThreeDBloxValidator
 {
  public:
   ThreeDBloxValidator(utl::Logger* logger);
-  void validate(const UnfoldedModel& model, dbChip* chip);
+  void validate(const UnfoldedModel& model,
+                dbChip* chip,
+                int tolerance = 0,
+                int bump_pitch_tolerance = 1,
+                bool verbose = false,
+                const std::string& report_file = "");
 
  private:
   void checkFloatingChips(const UnfoldedModel& model,
@@ -29,8 +34,11 @@ class ThreeDBloxValidator
                                   dbMarkerCategory* category);
   void checkNetConnectivity(const UnfoldedModel& model,
                             dbChip* chip,
-                            dbMarkerCategory* category);
+                            dbMarkerCategory* category,
+                            int bump_pitch_tolerance);
 
+  void checkInternalExtUsage(const UnfoldedModel& model,
+                             dbMarkerCategory* category);
   bool isOverlapFullyInConnections(const UnfoldedChip* chip1,
                                    const UnfoldedChip* chip2,
                                    const Cuboid& overlap) const;

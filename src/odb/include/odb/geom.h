@@ -172,6 +172,9 @@ class Cuboid
   // A cuboid intersects the interior of this cuboid
   bool overlaps(const Cuboid& b) const;
 
+  // A cuboid intersects the interior of this cuboid in XY plane
+  bool xyOverlaps(const Cuboid& b) const;
+
   //  A cuboid is contained in the interior of this cuboid
   bool contains(const Cuboid& b) const;
 
@@ -1262,6 +1265,12 @@ inline bool Cuboid::overlaps(const Cuboid& b) const
 {
   return (b.xhi_ > xlo_) && (b.xlo_ < xhi_) && (b.yhi_ > ylo_)
          && (b.ylo_ < yhi_) && (b.zhi_ > zlo_) && (b.zlo_ < zhi_);
+}
+
+inline bool Cuboid::xyOverlaps(const Cuboid& b) const
+{
+  return (b.xhi_ > xlo_) && (b.xlo_ < xhi_) && (b.yhi_ > ylo_)
+         && (b.ylo_ < yhi_);
 }
 
 inline bool Cuboid::contains(const Cuboid& b) const

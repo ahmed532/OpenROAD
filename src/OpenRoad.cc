@@ -503,14 +503,17 @@ void OpenRoad::read3DBloxBMap(const std::string& filename)
   parser.readBMap(filename);
 }
 
-void OpenRoad::check3DBlox()
+void OpenRoad::check3DBlox(int tolerance,
+                           int bump_pitch_tolerance,
+                           bool verbose,
+                           const std::string& report_file)
 {
   if (db_->getChip() == nullptr) {
     logger_->error(utl::ORD, 76, "No design loaded.");
     return;
   }
   odb::ThreeDBlox checker(logger_, db_, sta_);
-  checker.check();
+  checker.check(tolerance, bump_pitch_tolerance, verbose, report_file);
 }
 
 void OpenRoad::write3Dbv(const std::string& filename)

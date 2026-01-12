@@ -228,12 +228,34 @@ proc read_3dblox_bmap { args } {
   ord::read_3dblox_bmap_cmd $filename
 }
 
-sta::define_cmd_args "check_3dblox" {}
+sta::define_cmd_args "check_3dblox" {[-tolerance dbu] \
+                                   [-bump_pitch_tolerance dbu] \
+                                   [-verbose] \
+                                   [-report_file file]}
 
 proc check_3dblox { args } {
-  sta::parse_key_args "check_3dblox" args keys {} flags {}
+  sta::parse_key_args "check_3dblox" args keys {-tolerance -bump_pitch_tolerance -report_file} \
+    flags {-verbose}
   sta::check_argc_eq0 "check_3dblox" $args
-  ord::check_3dblox_cmd
+  
+  set tolerance 0
+  if { [info exists keys(-tolerance)] } {
+    set tolerance $keys(-tolerance)
+  }
+  
+  set bump_pitch_tolerance 1
+  if { [info exists keys(-bump_pitch_tolerance)] } {
+    set bump_pitch_tolerance $keys(-bump_pitch_tolerance)
+  }
+  
+  set verbose [info exists flags(-verbose)]
+  
+  set report_file ""
+  if { [info exists keys(-report_file)] } {
+    set report_file $keys(-report_file)
+  }
+  
+  ord::check_3dblox_cmd $tolerance $bump_pitch_tolerance $verbose $report_file
 }
 
 sta::define_cmd_args "write_db" {filename}
