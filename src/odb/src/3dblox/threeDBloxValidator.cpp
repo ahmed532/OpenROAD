@@ -132,23 +132,6 @@ void ThreeDBloxValidator::checkOverlappingChips(const UnfoldedModel& model,
     for (size_t j = i + 1; j < chips.size(); j++) {
       auto cuboid_j = chips[j].cuboid;
       if (cuboid_i.overlaps(cuboid_j)) {
-        printf("DEBUG: Overlap detected between %s and %s\n",
-               chips[i].getName().c_str(),
-               chips[j].getName().c_str());
-        printf("DEBUG: chip1 cuboid [%d,%d,%d] - [%d,%d,%d]\n",
-               cuboid_i.xMin(),
-               cuboid_i.yMin(),
-               cuboid_i.zMin(),
-               cuboid_i.xMax(),
-               cuboid_i.yMax(),
-               cuboid_i.zMax());
-        printf("DEBUG: chip2 cuboid [%d,%d,%d] - [%d,%d,%d]\n",
-               cuboid_j.xMin(),
-               cuboid_j.yMin(),
-               cuboid_j.zMin(),
-               cuboid_j.xMax(),
-               cuboid_j.yMax(),
-               cuboid_j.zMax());
         auto intersection = cuboid_i.intersect(cuboid_j);
         if (!isOverlapFullyInConnections(&chips[i], &chips[j], intersection)) {
           overlaps.emplace_back(&chips[i], &chips[j]);

@@ -153,7 +153,7 @@ void ThreeDBlox::writeDbv(const std::string& dbv_file, odb::dbChip* chip)
   }
   // write used techs
   for (auto tech : getUsedTechs(chip)) {
-    if (written_techs_.find(tech) != written_techs_.end()) {
+    if (written_techs_.contains(tech)) {
       continue;
     }
     written_techs_.insert(tech);
@@ -164,7 +164,7 @@ void ThreeDBlox::writeDbv(const std::string& dbv_file, odb::dbChip* chip)
   }
   // write used libs
   for (auto lib : getUsedLibs(chip)) {
-    if (written_libs_.find(lib) != written_libs_.end()) {
+    if (written_libs_.contains(lib)) {
       continue;
     }
     written_libs_.insert(lib);
@@ -216,7 +216,8 @@ void ThreeDBlox::readHeaderIncludes(const std::vector<std::string>& includes)
   }
 }
 
-dbChip::ChipType getChipType(const std::string& type, utl::Logger* logger)
+static dbChip::ChipType getChipType(const std::string& type,
+                                    utl::Logger* logger)
 {
   if (type == "die") {
     return dbChip::ChipType::DIE;
@@ -237,7 +238,7 @@ dbChip::ChipType getChipType(const std::string& type, utl::Logger* logger)
       utl::ODB, 527, "3DBV Parser Error: Invalid chip type: {}", type);
 }
 
-std::string getFileName(const std::string& tech_file_path)
+static std::string getFileName(const std::string& tech_file_path)
 {
   std::filesystem::path tech_file_path_fs(tech_file_path);
   return tech_file_path_fs.stem().string();
@@ -355,8 +356,8 @@ void ThreeDBlox::createChiplet(const ChipletDef& chiplet)
   }
 }
 
-dbChipRegion::Side getChipRegionSide(const std::string& side,
-                                     utl::Logger* logger)
+static dbChipRegion::Side getChipRegionSide(const std::string& side,
+                                            utl::Logger* logger)
 {
   if (side == "front") {
     return dbChipRegion::Side::FRONT;
@@ -481,7 +482,7 @@ void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
   }
   dbChipInst* inst = dbChipInst::create(db_->getChip(), chip, chip_inst.name);
   auto orient_str = chip_inst.orient;
-  if (dup_orient_map.find(orient_str) != dup_orient_map.end()) {
+  if (dup_orient_map.contains(orient_str)) {
     orient_str = dup_orient_map[orient_str];
   }
   auto orient = dbOrientType3D::fromString(orient_str);
@@ -493,15 +494,12 @@ void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
                    chip_inst.name);
   }
   inst->setOrient(orient.value());
-  printf("DEBUG: Creating chip inst %s at [%f,%f,%f], dbu_per_micron=%d\n",
-         chip_inst.name.c_str(), chip_inst.loc.x, chip_inst.loc.y, chip_inst.z, db_->getDbuPerMicron());
   Point3D loc(chip_inst.loc.x * db_->getDbuPerMicron(),
-                       chip_inst.loc.y * db_->getDbuPerMicron(),
-                       chip_inst.z * db_->getDbuPerMicron());
-  printf("DEBUG: Scaled loc [%d,%d,%d]\n", loc.x(), loc.y(), loc.z());
+              chip_inst.loc.y * db_->getDbuPerMicron(),
+              chip_inst.z * db_->getDbuPerMicron());
   inst->setLoc(loc);
 }
-std::vector<std::string> splitPath(const std::string& path)
+static std::vector<std::string> splitPath(const std::string& path)
 {
   std::vector<std::string> parts;
   std::istringstream stream(path);
@@ -608,7 +606,7 @@ void ThreeDBlox::readBMap(const std::string& bmap_file)
   std::map<odb::dbMaster*, BPinInfo> bpininfo;
   for (const auto& [inst, bterm] : bumps) {
     dbMaster* master = inst->getMaster();
-    if (bpininfo.find(master) != bpininfo.end()) {
+    if (bpininfo.contains(master)) {
       continue;
     }
 

@@ -18,15 +18,15 @@ ChipletInst:
 Stack:
   mid_inst1:
     loc: [1000.0, 2000.0]
-    z: 0.0
+    z: 300.0
     orient: R90
   leaf_inst_top:
-    loc: [2900.0, 1000.0]
+    loc: [1900.0, 1000.0]
     z: 0.0
     orient: R0
 
 Connection:
   rotation_conn:
-    top: mid_inst1/leaf_inst.regions.r1
-    bot: leaf_inst_top.regions.r1
+    top: mid_inst1/leaf_inst.regions.back_reg
+    bot: leaf_inst_top.regions.front_reg
     thickness: 0.0

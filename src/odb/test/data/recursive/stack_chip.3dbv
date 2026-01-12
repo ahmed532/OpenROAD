@@ -9,8 +9,15 @@ ChipletDef:
     thickness: 100
     design_area: [1000, 1000]
     regions:
-      r1:
+      front_reg:
         side: front
+        coords:
+          - [0, 0]
+          - [100, 0]
+          - [100, 100]
+          - [0, 100]
+      back_reg:
+        side: back
         coords:
           - [0, 0]
           - [100, 0]

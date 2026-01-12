@@ -14,14 +14,14 @@ ChipletInst:
 Stack:
   mid_inst:
     loc: [1000, 1000]
-    z: 100.0
+    z: 300.0
     orient: R90
   target_inst:
-    loc: [400, 1400]
-    z: 100.0
-    orient: R180
+    loc: [-500, 500]
+    z: 0.0
+    orient: R0
 Connection:
   nested_conn:
-    top: mid_inst/leaf_inst.regions.front_reg
+    top: mid_inst/leaf_inst.regions.back_reg
     bot: target_inst.regions.front_reg
     thickness: 0.0

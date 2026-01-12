@@ -17,7 +17,7 @@ ChipletInst:
 Stack:
   l1:
     loc: [0, 0]
-    z: 0
+    z: 300
     orient: R0
   l2:
     loc: [0, 0] 
@@ -26,5 +26,5 @@ Stack:
 
 Connection:
   sub_conn:
-    top: l1.regions.r1
-    bot: l2.regions.r1
+    top: l1.regions.back_reg
+    bot: l2.regions.front_reg

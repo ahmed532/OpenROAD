@@ -28,6 +28,6 @@ Stack:
 
 Connection:
   z_conn:
-    top: stack_inst.regions.r1
-    bot: base_inst.regions.r1
+    top: stack_inst.regions.back_reg
+    bot: base_inst.regions.front_reg
     thickness: 0.0

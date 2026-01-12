@@ -23,6 +23,9 @@ odb::dbChipRegion::Side computeEffectiveSide(
     if (inst->getOrient().isMirrorZ()) {
       z_flipped = !z_flipped;
     }
+    // printf("DEBUG EFFECTIVE SIDE: inst %s orient %s z_flipped %d\n",
+    // inst->getName().c_str(), inst->getOrient().getString().c_str(),
+    // (int)z_flipped);
   }
 
   if (!z_flipped) {
@@ -215,12 +218,7 @@ bool UnfoldedConnection::isValid() const
   }
 
   int gap = std::abs(top_z - bottom_z);
-
   if (gap > connection->getThickness()) {
-    printf("DEBUG: isValid Gap failed for %s. Gap: %d, Tol: %d\n",
-           connection->getName().c_str(),
-           gap,
-           connection->getThickness());
     return false;
   }
 
@@ -339,13 +337,13 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
     // Validation check for Error 411
     if (is_simple_type
         && (uf_region.isInternal() || uf_region.isInternalExt())) {
-      logger_->error(utl::ODB,
-                     463,
-                     "Chip {} of type {} cannot have INTERNAL/INTERNAL_EXT "
-                     "region {}",
-                     unfolded_chip.getName().c_str(),
-                     chipTypeToString(chip_type).c_str(),
-                     region_inst->getChipRegion()->getName().c_str());
+      logger_->error(
+          utl::ODB,
+          463,
+          "Chip {} of type {} cannot have INTERNAL/INTERNAL_EXT region {}",
+          unfolded_chip.getName().c_str(),
+          chipTypeToString(chip_type).c_str(),
+          region_inst->getChipRegion()->getName().c_str());
     }
 
     unfoldBumps(uf_region, path);

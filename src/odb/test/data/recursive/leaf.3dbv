@@ -8,8 +8,9 @@ ChipletDef:
   LeafChip:
     type: die
     design_area: [1000, 1000]
+    thickness: 300
     regions:
-      r1:
+      front_reg:
         side: front
         coords:
           - [0, 0]

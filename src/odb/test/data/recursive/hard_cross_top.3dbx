@@ -20,7 +20,7 @@ ChipletInst:
 Stack:
   branchA:
     loc: [1000.0, 1000.0]
-    z: 0.0
+    z: 300.0
     orient: R0
   branchB:
     loc: [2000.0, 2000.0]
@@ -29,6 +29,6 @@ Stack:
 
 Connection:
   cross_conn:
-    top: branchA/sub_inst/leaf_inst.regions.r1
-    bot: branchB/leaf_inst.regions.r1
+    top: branchA/sub_inst/leaf_inst.regions.back_reg
+    bot: branchB/leaf_inst.regions.front_reg
     thickness: 0.0

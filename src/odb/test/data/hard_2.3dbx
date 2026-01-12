@@ -13,13 +13,13 @@ ChipletInst:
     reference: SoC
 Stack:
   interposer_inst:
-    loc: [500, 1500]
+    loc: [2000, 1500]
     z: 100.0
     orient: R90
   target_inst:
     loc: [500, 2500]
-    z: 100.0
-    orient: R0
+    z: 400.0
+    orient: MZ
 Connection:
   hier_rot_conn:
     top: interposer_inst/chip_inst.regions.front_reg

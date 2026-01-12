@@ -22,6 +22,6 @@ Stack:
     orient: MZ
 Connection:
   mirrored_conn:
-    top: inst_mz2.regions.back_reg
-    bot: inst_mz1.regions.front_reg
+    top: inst_mz2.regions.front_reg
+    bot: inst_mz1.regions.back_reg
     thickness: 0.0
