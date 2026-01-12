@@ -3,6 +3,7 @@
 
 #include "unfoldedModel.h"
 
+#include <cstdio>
 #include <ranges>
 #include <string>
 #include <vector>
@@ -74,19 +75,66 @@ std::string chipTypeToString(odb::dbChip::ChipType type)
 }
 
 }  // namespace
+namespace {
+
+static void applyTransform3D(odb::Point3D& point, odb::dbChipInst* inst)
+{
+  // 1. Apply 2D Transform (XY)
+  // Construct 2D transform manually to ensure no 3D artifacts leak in
+  odb::Point loc_xy(inst->getLoc().x(), inst->getLoc().y());
+  odb::dbTransform t(inst->getOrient().getOrientType2D(), loc_xy);
+  t.apply(point);
+
+  // 2. Apply Z Mirror (if any)
+  if (inst->getOrient().isMirrorZ()) {
+    // "Flip in place" logic: z' = -z + thickness
+    // This assumes the mirror happens within the chip's vertical bounding box
+    int thickness = inst->getMasterChip()->getThickness();
+    point.setZ(-point.z() + thickness);
+  }
+
+  // 3. Apply Z Offset
+  int z_offset = inst->getLoc().z();
+  point.setZ(point.z() + z_offset);
+}
+
+static void applyTransform3D(odb::Cuboid& cuboid, odb::dbChipInst* inst)
+{
+  // 1. Apply 2D Transform (XY)
+  odb::Point loc_xy(inst->getLoc().x(), inst->getLoc().y());
+  odb::dbTransform t(inst->getOrient().getOrientType2D(), loc_xy);
+  t.apply(cuboid);
+
+  // 2. Apply Z Mirror (if any)
+  int zlo = cuboid.zMin();
+  int zhi = cuboid.zMax();
+
+  if (inst->getOrient().isMirrorZ()) {
+    int thickness = inst->getMasterChip()->getThickness();
+    zlo = -zlo + thickness;
+    zhi = -zhi + thickness;
+    std::swap(zlo, zhi);
+  }
+
+  // 3. Apply Z Offset
+  int z_offset = inst->getLoc().z();
+  cuboid.set_zlo(zlo + z_offset);
+  cuboid.set_zhi(zhi + z_offset);
+}
+
+}  // namespace
 
 namespace odb {
 
 int UnfoldedRegionFull::getSurfaceZ() const
 {
-  switch (effective_side) {
-    case dbChipRegion::Side::FRONT:
-      return cuboid.zMax();
-    case dbChipRegion::Side::BACK:
-      return cuboid.zMin();
-    default:
-      return cuboid.zCenter();  // Internal
+  if (isFacingUp()) {
+    return cuboid.zMax();
   }
+  if (isFacingDown()) {
+    return cuboid.zMin();
+  }
+  return cuboid.zCenter();
 }
 
 bool UnfoldedRegionFull::isFacingUp() const
@@ -120,7 +168,7 @@ bool UnfoldedConnection::isValid() const
   }
 
   // 1. XY Overlap
-  if (!top_region->cuboid.xyOverlaps(bottom_region->cuboid)) {
+  if (!top_region->cuboid.xyIntersects(bottom_region->cuboid)) {
     return false;
   }
 
@@ -129,32 +177,54 @@ bool UnfoldedConnection::isValid() const
   bool bottom_is_embedded_host = bottom_region->isInternalExt();
 
   if (top_is_embedded_host || bottom_is_embedded_host) {
-    // Geometric containment check: The embedded chip (FRONT/BACK)
-    // must be spatially contained or overlapping with the host's INTERNAL_EXT
-    // region. We relax "facing" rules for embedded.
     return true;
   }
 
-  // 3. Standard & Interposer Facing Logic
-  bool top_down = top_region->isFacingDown();
-  bool bot_up = bottom_region->isFacingUp();
-  bool top_up = top_region->isFacingUp();
-  bool bot_down = bottom_region->isFacingDown();
+  // 3. Connectability Check (Facing Direction & Z Ordering)
+  bool top_faces_down = top_region->isFacingDown();
+  bool bot_faces_up = bottom_region->isFacingUp();
 
-  // Standard: Top(Back/Down) <-> Bottom(Front/Up)
-  // Interposer: Top(Front/Up) <-> Bottom(Back/Down) [Inverted]
-  if (!(top_down && bot_up) && !(top_up && bot_down)) {
+  bool top_faces_up = top_region->isFacingUp();
+  bool bot_faces_down = bottom_region->isFacingDown();
+
+  // Valid Pair 1: Standard (Top chip looking down, Bottom chip looking up)
+  bool standard_pair = top_faces_down && bot_faces_up;
+
+  // Valid Pair 2: Inverted/Interposer (Top chip looking up, Bottom chip looking
+  // down)
+  bool inverted_pair = top_faces_up && bot_faces_down;
+
+  if (!standard_pair && !inverted_pair) {
     return false;
   }
 
-  // 4. Z-Gap
+  // 4. Z-Gap & Ordering
   int top_z = top_region->getSurfaceZ();
   int bottom_z = bottom_region->getSurfaceZ();
-  if (top_z < bottom_z) {
-    std::swap(top_z, bottom_z);
+
+  if (standard_pair) {
+    // Top(Down) should be >= Bot(Up)
+    if (top_z < bottom_z) {
+      return false;
+    }
+  } else {
+    // Top(Up) and Bot(Down) -> Bot should be >= Top
+    if (bottom_z < top_z) {
+      return false;
+    }
   }
 
-  return (top_z - bottom_z) <= connection->getThickness();
+  int gap = std::abs(top_z - bottom_z);
+
+  if (gap > connection->getThickness()) {
+    printf("DEBUG: isValid Gap failed for %s. Gap: %d, Tol: %d\n",
+           connection->getName().c_str(),
+           gap,
+           connection->getThickness());
+    return false;
+  }
+
+  return true;
 }
 
 std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
@@ -195,92 +265,116 @@ UnfoldedModel::UnfoldedModel(utl::Logger* logger) : logger_(logger)
 {
 }
 
+UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
+                                               std::vector<dbChipInst*>& path,
+                                               Cuboid& local_cuboid)
+{
+  path.push_back(chip_inst);
+  UnfoldedChip unfolded_chip;
+  unfolded_chip.chip_inst_path = path;
+
+  // Initial master cuboid (leaf) or merged sub-instances (HIER)
+  if (chip_inst->getMasterChip()->getChipType() == dbChip::ChipType::HIER) {
+    unfolded_chip.cuboid.mergeInit();
+    for (auto sub_inst : chip_inst->getMasterChip()->getChipInsts()) {
+      Cuboid sub_local_cuboid;
+      buildUnfoldedChip(sub_inst, path, sub_local_cuboid);
+      unfolded_chip.cuboid.merge(sub_local_cuboid);
+    }
+  } else {
+    unfolded_chip.cuboid = chip_inst->getMasterChip()->getCuboid();
+  }
+
+  // local_cuboid for parent is this chip's master-coord cuboid transformed by
+  // this instance's transform.
+  local_cuboid = unfolded_chip.cuboid;
+  chip_inst->getTransform().apply(local_cuboid);
+
+  // GLOBAL cuboid for the UnfoldedChip object
+  // It starts as the master cuboid (leaf) or merged sub-master cuboid (HIER).
+  // We apply the instance transforms of ALL elements in the path from leaf to
+  // root.
+  for (auto inst : path | std::views::reverse) {
+    applyTransform3D(unfolded_chip.cuboid, inst);
+  }
+
+  // Unfold regions
+  auto chip_type = chip_inst->getMasterChip()->getChipType();
+  bool is_simple_type
+      = (chip_type == dbChip::ChipType::DIE || chip_type == dbChip::ChipType::IP
+         || chip_type == dbChip::ChipType::HIER);
+
+  for (auto region_inst : chip_inst->getRegions()) {
+    UnfoldedRegionFull uf_region;
+    uf_region.region_inst = region_inst;
+    uf_region.parent_chip = nullptr;  // Fix up later
+    uf_region.cuboid = region_inst->getChipRegion()->getCuboid();
+
+    // Global coordinates for region FOOTPRINT (XY) and Z
+    for (auto inst : path | std::views::reverse) {
+      applyTransform3D(uf_region.cuboid, inst);
+    }
+
+    auto original_side = region_inst->getChipRegion()->getSide();
+    uf_region.effective_side = computeEffectiveSide(original_side, path);
+
+    // Set Z surface using transformed surface point to handle all orientations
+    int master_thick = chip_inst->getMasterChip()->getThickness();
+    int local_z = 0;
+    if (original_side == dbChipRegion::Side::FRONT) {
+      local_z = master_thick;
+    } else if (original_side == dbChipRegion::Side::BACK) {
+      local_z = 0;
+    } else {
+      local_z = master_thick / 2;  // Approximate for internal
+    }
+
+    Point3D surface_pt(0, 0, local_z);
+    for (auto inst : path | std::views::reverse) {
+      applyTransform3D(surface_pt, inst);
+    }
+    uf_region.cuboid.set_zlo(surface_pt.z());
+    uf_region.cuboid.set_zhi(surface_pt.z());
+
+    // Validation check for Error 411
+    if (is_simple_type
+        && (uf_region.isInternal() || uf_region.isInternalExt())) {
+      logger_->error(utl::ODB,
+                     463,
+                     "Chip {} of type {} cannot have INTERNAL/INTERNAL_EXT "
+                     "region {}",
+                     unfolded_chip.getName().c_str(),
+                     chipTypeToString(chip_type).c_str(),
+                     region_inst->getChipRegion()->getName().c_str());
+    }
+
+    unfoldBumps(uf_region, path);
+    unfolded_chip.regions.push_back(uf_region);
+  }
+
+  unfolded_chips_.push_back(unfolded_chip);
+  UnfoldedChip* stable_chip_ptr = &unfolded_chips_.back();
+  for (auto& region : stable_chip_ptr->regions) {
+    region.parent_chip = stable_chip_ptr;
+    for (auto& bump : region.bumps) {
+      bump.parent_region = &region;
+    }
+  }
+  chip_path_map_[stable_chip_ptr->getPathKey()] = stable_chip_ptr;
+
+  path.pop_back();
+  return stable_chip_ptr;
+}
+
 void UnfoldedModel::build(dbChip* chip)
 {
   for (dbChipInst* chip_inst : chip->getChipInsts()) {
-    UnfoldedChip unfolded_chip;
-    unfoldChip(chip_inst, unfolded_chip);
+    std::vector<dbChipInst*> path;
+    Cuboid local_cuboid;
+    buildUnfoldedChip(chip_inst, path, local_cuboid);
   }
   unfoldConnections(chip);
   unfoldNets(chip);
-}
-
-void UnfoldedModel::unfoldChip(dbChipInst* chip_inst,
-                               UnfoldedChip& unfolded_chip)
-{
-  unfolded_chip.chip_inst_path.push_back(chip_inst);
-
-  if (chip_inst->getMasterChip()->getChipType() == dbChip::ChipType::HIER) {
-    for (auto sub_inst : chip_inst->getMasterChip()->getChipInsts()) {
-      unfoldChip(sub_inst, unfolded_chip);
-    }
-  } else {
-    // Original logic: Leaf chip cuboid calculation
-    unfolded_chip.cuboid = chip_inst->getMasterChip()->getCuboid();
-    for (auto inst : unfolded_chip.chip_inst_path | std::views::reverse) {
-      inst->getTransform().apply(unfolded_chip.cuboid);
-    }
-
-    // Unfold regions
-    auto chip_type = chip_inst->getMasterChip()->getChipType();
-    bool is_simple_type = (chip_type == dbChip::ChipType::DIE
-                           || chip_type == dbChip::ChipType::IP
-                           || chip_type == dbChip::ChipType::HIER);
-
-    for (auto region_inst : chip_inst->getRegions()) {
-      UnfoldedRegionFull uf_region;
-      uf_region.region_inst = region_inst;
-      uf_region.parent_chip = &unfolded_chip;  // This is temporary pointer
-      uf_region.cuboid = region_inst->getChipRegion()->getCuboid();
-
-      // Apply hierarchy transforms to region cuboid
-      for (auto inst : unfolded_chip.chip_inst_path | std::views::reverse) {
-        inst->getTransform().apply(uf_region.cuboid);
-      }
-
-      // Compute effective side after all flips
-      uf_region.effective_side
-          = computeEffectiveSide(region_inst->getChipRegion()->getSide(),
-                                 unfolded_chip.chip_inst_path);
-
-      // Validation check for Error 411
-      if (is_simple_type
-          && (uf_region.isInternal() || uf_region.isInternalExt())) {
-        logger_->error(utl::ODB,
-                       463,
-                       "Chip {} of type {} cannot have INTERNAL/INTERNAL_EXT "
-                       "region {}",
-                       unfolded_chip.getName().c_str(),
-                       chipTypeToString(chip_type).c_str(),
-                       region_inst->getChipRegion()->getName());
-      }
-
-      // Unfold bumps
-      unfoldBumps(uf_region, unfolded_chip.chip_inst_path);
-
-      unfolded_chip.regions.push_back(uf_region);
-    }
-
-    // Fix up parent pointers after all regions are added (deque stability
-    // check) Note: Since unfolded_chip is local here and then copied into the
-    // deque, the regions inside will be copied. However, the `parent_chip`
-    // pointer inside `uf_region` needs to point to the stable location in
-    // `unfolded_chips_`. We handle this AFTER pushing back to
-    // `unfolded_chips_`.
-
-    unfolded_chips_.push_back(unfolded_chip);
-    UnfoldedChip* stable_chip_ptr = &unfolded_chips_.back();
-    for (auto& region : stable_chip_ptr->regions) {
-      region.parent_chip = stable_chip_ptr;
-      for (auto& bump : region.bumps) {
-        bump.parent_region = &region;
-      }
-    }
-
-    chip_path_map_[stable_chip_ptr->getPathKey()] = stable_chip_ptr;
-  }
-
-  unfolded_chip.chip_inst_path.pop_back();
 }
 
 void UnfoldedModel::unfoldBumps(UnfoldedRegionFull& uf_region,
@@ -302,10 +396,9 @@ void UnfoldedModel::unfoldBumps(UnfoldedRegionFull& uf_region,
     // Get local position from bump definition
     Point local_xy = bump->getInst()->getLocation();
 
-    // Transform to global coordinates
     Point3D global_pos(local_xy.x(), local_xy.y(), 0);
     for (auto inst : path | std::views::reverse) {
-      inst->getTransform().apply(global_pos);
+      applyTransform3D(global_pos, inst);
     }
 
     // Z is the region's connecting surface
@@ -381,14 +474,6 @@ void UnfoldedModel::unfoldConnectionsRecursive(
     auto* top_region_inst = conn->getTopRegion();
     auto* bottom_region_inst = conn->getBottomRegion();
 
-    // Check for BTerm connection
-    // If top or bottom chip is not resolved, it might be a BTerm connection?
-    // The dbChipConn model:
-    // If top_region_inst is null, it might be virtual.
-    // But how do we distinguish BTerm connection from purely virtual?
-    // Assuming for now if one side is missing, it's potentially BTerm or
-    // virtual.
-
     auto top_full_path = parent_path;
     for (auto* inst : conn->getTopRegionPath()) {
       top_full_path.push_back(inst);
@@ -413,16 +498,9 @@ void UnfoldedModel::unfoldConnectionsRecursive(
     uf_conn.connection = conn;
     uf_conn.top_region = top_region;
     uf_conn.bottom_region = bottom_region;
-    // Pointers to chips for checks (redundant with region->parent_chip but kept
-    // for now)
 
-    // Check if one side is BTerm (TODO: verify how BTerm connections are
-    // represented in dbChipConn) Currently dbChipConn doesn't explicitly point
-    // to dbBTerm. If one side is null, we assume it's external/BTerm for now
-    // and valid.
-    if (!top_region || !bottom_region) {
-      uf_conn.is_bterm_connection = true;
-    } else {
+    uf_conn.is_bterm_connection = false;
+    if (top_region && bottom_region) {
       uf_conn.connection_cuboid = computeConnectionCuboid(
           *top_region, *bottom_region, conn->getThickness());
     }

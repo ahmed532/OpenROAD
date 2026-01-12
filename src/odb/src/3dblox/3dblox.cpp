@@ -493,9 +493,13 @@ void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
                    chip_inst.name);
   }
   inst->setOrient(orient.value());
-  inst->setLoc(Point3D(chip_inst.loc.x * db_->getDbuPerMicron(),
+  printf("DEBUG: Creating chip inst %s at [%f,%f,%f], dbu_per_micron=%d\n",
+         chip_inst.name.c_str(), chip_inst.loc.x, chip_inst.loc.y, chip_inst.z, db_->getDbuPerMicron());
+  Point3D loc(chip_inst.loc.x * db_->getDbuPerMicron(),
                        chip_inst.loc.y * db_->getDbuPerMicron(),
-                       chip_inst.z * db_->getDbuPerMicron()));
+                       chip_inst.z * db_->getDbuPerMicron());
+  printf("DEBUG: Scaled loc [%d,%d,%d]\n", loc.x(), loc.y(), loc.z());
+  inst->setLoc(loc);
 }
 std::vector<std::string> splitPath(const std::string& path)
 {

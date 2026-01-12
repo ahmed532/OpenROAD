@@ -1,0 +1,16 @@
+Header:
+  version: 3
+  unit: micron
+  precision: 2000
+  include:
+    - hard.3dbv
+Design:
+  name: Interposer
+ChipletInst:
+  chip_inst:
+    reference: SoC
+Stack:
+  chip_inst:
+    loc: [500, 500]
+    z: 0.0
+    orient: R0

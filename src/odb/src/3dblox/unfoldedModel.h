@@ -100,7 +100,9 @@ class UnfoldedModel
   const std::deque<UnfoldedNet>& getNets() const { return unfolded_nets_; }
 
  private:
-  void unfoldChip(dbChipInst* chip_inst, UnfoldedChip& unfolded_chip);
+  UnfoldedChip* buildUnfoldedChip(dbChipInst* chip_inst,
+                                  std::vector<dbChipInst*>& path,
+                                  Cuboid& local_cuboid);
   void unfoldBumps(UnfoldedRegionFull& uf_region,
                    const std::vector<dbChipInst*>& path);
   void unfoldConnections(dbChip* chip);

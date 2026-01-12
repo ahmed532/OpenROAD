@@ -166,6 +166,9 @@ class Cuboid
   // A cuboid intersects any part of this cuboid.
   bool intersects(const Cuboid& b) const;
 
+  // A cuboid intersects any part of this cuboid in XY plane
+  bool xyIntersects(const Cuboid& b) const;
+
   // A point intersects the interior of this cuboid
   bool overlaps(const Point3D& p) const;
 
@@ -1253,6 +1256,12 @@ inline bool Cuboid::intersects(const Cuboid& b) const
 {
   return (b.xhi_ >= xlo_) && (b.xlo_ <= xhi_) && (b.yhi_ >= ylo_)
          && (b.ylo_ <= yhi_) && (b.zhi_ >= zlo_) && (b.zlo_ <= zhi_);
+}
+
+inline bool Cuboid::xyIntersects(const Cuboid& b) const
+{
+  return (b.xhi_ >= xlo_) && (b.xlo_ <= xhi_) && (b.yhi_ >= ylo_)
+         && (b.ylo_ <= yhi_);
 }
 
 inline bool Cuboid::overlaps(const Point3D& p) const

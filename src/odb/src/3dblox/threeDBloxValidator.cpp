@@ -21,7 +21,7 @@ ThreeDBloxValidator::ThreeDBloxValidator(utl::Logger* logger) : logger_(logger)
 }
 
 void ThreeDBloxValidator::validate(const UnfoldedModel& model,
-                                   dbChip* chip,
+                                   odb::dbChip* chip,
                                    int tolerance,
                                    int bump_pitch_tolerance,
                                    bool verbose,
@@ -29,17 +29,16 @@ void ThreeDBloxValidator::validate(const UnfoldedModel& model,
 {
   odb::dbMarkerCategory* top_category
       = odb::dbMarkerCategory::createOrReplace(chip, "3DBlox");
+
   odb::dbMarkerCategory* conn_category
       = odb::dbMarkerCategory::createOrReplace(top_category, "Connectivity");
   odb::dbMarkerCategory* phys_category
       = odb::dbMarkerCategory::createOrReplace(top_category, "Physical");
-  odb::dbMarkerCategory* const_category
-      = odb::dbMarkerCategory::createOrReplace(top_category, "Constraint");
 
   checkFloatingChips(model, conn_category);
   checkOverlappingChips(model, phys_category);
   checkConnectionRegions(model, chip, conn_category);
-  checkInternalExtUsage(model, const_category);
+
   checkBumpPhysicalAlignment(model, phys_category);
   checkNetConnectivity(model, chip, conn_category, bump_pitch_tolerance);
 }
@@ -59,10 +58,10 @@ void ThreeDBloxValidator::checkFloatingChips(const UnfoldedModel& model,
       int bot_idx = -1;
       for (size_t i = 0; i < chips.size(); i++) {
         if (&chips[i] == conn.top_region->parent_chip) {
-          top_idx = i;
+          top_idx = (int) i;
         }
         if (&chips[i] == conn.bottom_region->parent_chip) {
-          bot_idx = i;
+          bot_idx = (int) i;
         }
       }
       if (top_idx != -1 && bot_idx != -1) {
@@ -71,22 +70,20 @@ void ThreeDBloxValidator::checkFloatingChips(const UnfoldedModel& model,
     }
   }
 
-  // 2. Union chips physically touching (optional, depends on policy)
-  // According to Plan 8, we only unite if there's a valid connection or if they
-  // touch.
+  // 2. Union chips physically touching
   for (size_t i = 0; i < chips.size(); i++) {
     auto cuboid_i = chips[i].cuboid;
     for (size_t j = i + 1; j < chips.size(); j++) {
       auto cuboid_j = chips[j].cuboid;
       if (cuboid_i.intersects(cuboid_j)) {
-        uf.unite(i, j);
+        uf.unite((int) i, (int) j);
       }
     }
   }
 
   std::map<int, std::vector<const UnfoldedChip*>> sets;
   for (size_t i = 0; i < chips.size(); i++) {
-    sets[uf.find(i)].push_back(&chips[i]);
+    sets[uf.find((int) i)].push_back(&chips[i]);
   }
 
   if (sets.size() > 1) {
@@ -103,7 +100,7 @@ void ThreeDBloxValidator::checkFloatingChips(const UnfoldedModel& model,
                       });
 
     odb::dbMarkerCategory* floating_chips_category
-        = odb::dbMarkerCategory::createOrReplace(category, "Floating");
+        = odb::dbMarkerCategory::createOrReplace(category, "Floating chips");
     int num_floating_sets = static_cast<int>(insts_sets.size()) - 1;
     logger_->warn(
         utl::ODB, 151, "Found {} floating chip sets", num_floating_sets);
@@ -135,6 +132,23 @@ void ThreeDBloxValidator::checkOverlappingChips(const UnfoldedModel& model,
     for (size_t j = i + 1; j < chips.size(); j++) {
       auto cuboid_j = chips[j].cuboid;
       if (cuboid_i.overlaps(cuboid_j)) {
+        printf("DEBUG: Overlap detected between %s and %s\n",
+               chips[i].getName().c_str(),
+               chips[j].getName().c_str());
+        printf("DEBUG: chip1 cuboid [%d,%d,%d] - [%d,%d,%d]\n",
+               cuboid_i.xMin(),
+               cuboid_i.yMin(),
+               cuboid_i.zMin(),
+               cuboid_i.xMax(),
+               cuboid_i.yMax(),
+               cuboid_i.zMax());
+        printf("DEBUG: chip2 cuboid [%d,%d,%d] - [%d,%d,%d]\n",
+               cuboid_j.xMin(),
+               cuboid_j.yMin(),
+               cuboid_j.zMin(),
+               cuboid_j.xMax(),
+               cuboid_j.yMax(),
+               cuboid_j.zMax());
         auto intersection = cuboid_i.intersect(cuboid_j);
         if (!isOverlapFullyInConnections(&chips[i], &chips[j], intersection)) {
           overlaps.emplace_back(&chips[i], &chips[j]);
@@ -145,7 +159,7 @@ void ThreeDBloxValidator::checkOverlappingChips(const UnfoldedModel& model,
 
   if (!overlaps.empty()) {
     odb::dbMarkerCategory* overlapping_chips_category
-        = odb::dbMarkerCategory::createOrReplace(category, "Overlap");
+        = odb::dbMarkerCategory::createOrReplace(category, "Overlapping chips");
     logger_->warn(
         utl::ODB, 156, "Found {} overlapping chips", (int) overlaps.size());
 
@@ -178,12 +192,37 @@ void ThreeDBloxValidator::checkConnectionRegions(const UnfoldedModel& model,
 {
   const auto& connections = model.getConnections();
   odb::dbMarkerCategory* invalid_conn_category
-      = odb::dbMarkerCategory::createOrReplace(category, "InvalidConnection");
+      = odb::dbMarkerCategory::createOrReplace(category, "Connected regions");
+
+  int non_intersecting_count = 0;
 
   for (const auto& conn : connections) {
+    bool has_missing_region = (!conn.top_region || !conn.bottom_region)
+                              && !conn.is_bterm_connection;
+
+    // Skip marker and warning for intentional virtual connections
+    // If it's virtual in 3dblox, it will have a nullptr in the dbChipConn for
+    // one of the regions
+    if (has_missing_region) {
+      if (conn.connection->getTopRegion() == nullptr
+          || conn.connection->getBottomRegion() == nullptr) {
+        continue;
+      }
+      std::string top_status = conn.top_region ? "found" : "null";
+      std::string bot_status = conn.bottom_region ? "found" : "null";
+      logger_->warn(utl::ODB,
+                    404,
+                    "Connection {} has missing regions (top: {}, bottom: {})",
+                    conn.connection->getName(),
+                    top_status,
+                    bot_status);
+      continue;
+    }
+
     if (!conn.isValid()) {
       odb::dbMarker* marker = odb::dbMarker::create(invalid_conn_category);
       marker->addSource(conn.connection);
+
       if (conn.top_region) {
         marker->addSource(conn.top_region->region_inst);
         marker->addShape(Rect(conn.top_region->cuboid.xMin(),
@@ -198,8 +237,17 @@ void ThreeDBloxValidator::checkConnectionRegions(const UnfoldedModel& model,
                               conn.bottom_region->cuboid.xMax(),
                               conn.bottom_region->cuboid.yMax()));
       }
+
       marker->setComment("Invalid connection: " + conn.connection->getName());
+      non_intersecting_count++;
     }
+  }
+
+  if (non_intersecting_count > 0) {
+    logger_->warn(utl::ODB,
+                  206,
+                  "Found {} non-intersecting connections",
+                  non_intersecting_count);
   }
 }
 
@@ -233,8 +281,37 @@ void ThreeDBloxValidator::checkInternalExtUsage(const UnfoldedModel& model,
 void ThreeDBloxValidator::checkBumpPhysicalAlignment(const UnfoldedModel& model,
                                                      dbMarkerCategory* category)
 {
-  // Implementation for Rule 3: Physical alignment check
-  // Compare global bump position with corresponding DEF component position.
+  // Rule 3: Physical alignment check
+  // Verify that bumps are located within their parent region's footprint
+
+  odb::dbMarkerCategory* alignment_category
+      = odb::dbMarkerCategory::createOrReplace(category, "BumpAlignment");
+
+  for (const auto& chip : model.getChips()) {
+    for (const auto& region : chip.regions) {
+      for (const auto& bump : region.bumps) {
+        // Check if bump global XY is inside region global XY
+        int x = bump.global_position.x();
+        int y = bump.global_position.y();
+
+        if (x < region.cuboid.xMin() || x > region.cuboid.xMax()
+            || y < region.cuboid.yMin() || y > region.cuboid.yMax()) {
+          odb::dbMarker* marker = odb::dbMarker::create(alignment_category);
+          if (bump.bump_inst) {
+            marker->addSource(bump.bump_inst);
+          } else {
+            marker->addSource(region.region_inst);  // Fallback
+          }
+          marker->addShape(
+              Rect(x - 50, y - 50, x + 50, y + 50));  // Tiny marker
+
+          std::string msg = "Bump is outside its parent region "
+                            + region.region_inst->getChipRegion()->getName();
+          marker->setComment(msg);
+        }
+      }
+    }
+  }
 }
 
 void ThreeDBloxValidator::checkNetConnectivity(const UnfoldedModel& model,
@@ -245,33 +322,64 @@ void ThreeDBloxValidator::checkNetConnectivity(const UnfoldedModel& model,
   odb::dbMarkerCategory* open_net_category
       = odb::dbMarkerCategory::createOrReplace(category, "OpenNet");
 
+  const auto& connections = model.getConnections();
+
   for (const auto& net : model.getNets()) {
     if (net.connected_bumps.empty()) {
       continue;
     }
 
-    utl::UnionFind uf(net.connected_bumps.size());
+    utl::UnionFind uf((int) net.connected_bumps.size());
 
     for (size_t i = 0; i < net.connected_bumps.size(); i++) {
       for (size_t j = i + 1; j < net.connected_bumps.size(); j++) {
         const auto* b1 = net.connected_bumps[i];
         const auto* b2 = net.connected_bumps[j];
 
-        // Check if bumps are connected via alignment
-        int dx = std::abs(b1->global_position.x() - b2->global_position.x());
-        int dy = std::abs(b1->global_position.y() - b2->global_position.y());
-        int dz = std::abs(b1->global_position.z() - b2->global_position.z());
+        // 1. Same Chip Connection (On-Die Routing)
+        // Bumps on the same physical chip instance are assumed connected via
+        // internal routing
+        if (b1->parent_region->parent_chip == b2->parent_region->parent_chip) {
+          uf.unite((int) i, (int) j);
+          continue;
+        }
 
-        if (dx <= bump_pitch_tolerance && dy <= bump_pitch_tolerance
-            && dz <= 10) {
-          uf.unite(i, j);
+        // 2. Inter-Die Connection
+        // Must find a valid connection between their regions
+        const UnfoldedConnection* valid_conn = nullptr;
+
+        for (const auto& conn : connections) {
+          if (!conn.isValid()) {
+            continue;
+          }
+
+          bool match = (conn.top_region == b1->parent_region
+                        && conn.bottom_region == b2->parent_region)
+                       || (conn.top_region == b2->parent_region
+                           && conn.bottom_region == b1->parent_region);
+          if (match) {
+            valid_conn = &conn;
+            break;
+          }
+        }
+
+        if (valid_conn) {
+          // Check Geometric Alignment
+          int dx = std::abs(b1->global_position.x() - b2->global_position.x());
+          int dy = std::abs(b1->global_position.y() - b2->global_position.y());
+          int dz = std::abs(b1->global_position.z() - b2->global_position.z());
+
+          if (dx <= bump_pitch_tolerance && dy <= bump_pitch_tolerance
+              && dz <= valid_conn->connection->getThickness()) {
+            uf.unite((int) i, (int) j);
+          }
         }
       }
     }
 
     std::map<int, std::vector<size_t>> groups;
     for (size_t i = 0; i < net.connected_bumps.size(); i++) {
-      groups[uf.find(i)].push_back(i);
+      groups[uf.find((int) i)].push_back(i);
     }
 
     if (groups.size() > 1) {
@@ -281,7 +389,9 @@ void ThreeDBloxValidator::checkNetConnectivity(const UnfoldedModel& model,
                          + std::to_string(groups.size()) + " isolated groups.");
       for (const auto& [root, group] : groups) {
         for (size_t idx : group) {
-          marker->addSource(net.connected_bumps[idx]->bump_inst);
+          if (net.connected_bumps[idx]->bump_inst) {
+            marker->addSource(net.connected_bumps[idx]->bump_inst);
+          }
         }
       }
     }
