@@ -1,0 +1,4 @@
+bump_clk BUMP 100.0 100.0 clk clk
+bump_rst BUMP 150.0 100.0 rst rst
+bump_data BUMP 200.0 100.0 data_bus[0] data_bus[0]
+bump_bad BUMP 250.0 100.0 bad_port bad_net

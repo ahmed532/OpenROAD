@@ -1,0 +1,27 @@
+Header:
+  version: 3
+  unit: micron
+  precision: 2000
+  include:
+    - hard.3dbv
+Design:
+  name: TopDesign
+ChipletInst:
+  inst_mz1:
+    reference: SoC
+  inst_mz2:
+    reference: SoC
+Stack:
+  inst_mz1:
+    loc: [0, 0]
+    z: 300.0
+    orient: MZ
+  inst_mz2:
+    loc: [0, 0]
+    z: 600.0
+    orient: MZ
+Connection:
+  mirrored_conn:
+    top: inst_mz2.regions.front_reg
+    bot: inst_mz1.regions.back_reg
+    thickness: 0.0

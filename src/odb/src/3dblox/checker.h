@@ -8,6 +8,10 @@
 #include "unfoldedModel.h"
 #include "utl/Logger.h"
 
+namespace sta {
+class Sta;
+}
+
 namespace odb {
 class dbChip;
 class dbMarkerCategory;
@@ -17,7 +21,7 @@ class Checker
  public:
   Checker(utl::Logger* logger);
   ~Checker() = default;
-  void check(odb::dbChip* chip);
+  void check(dbChip* chip, int bump_pitch_tolerance = 1);
 
  private:
   void checkFloatingChips(const UnfoldedModel& model,
@@ -27,16 +31,23 @@ class Checker
   void checkConnectionRegions(const UnfoldedModel& model,
                               dbChip* chip,
                               dbMarkerCategory* category);
-  void checkBumpPhysicalAlignment(const UnfoldedModel& model,
-                                  dbMarkerCategory* category);
   void checkNetConnectivity(const UnfoldedModel& model,
                             dbChip* chip,
-                            dbMarkerCategory* category);
+                            dbMarkerCategory* category,
+                            int bump_pitch_tolerance);
 
-  bool isOverlapFullyInConnections(const UnfoldedChip* chip1,
+  void checkInternalExtUsage(const UnfoldedModel& model,
+                             dbMarkerCategory* category);
+  void checkConnectivity(odb::dbChip* chip, odb::dbMarkerCategory* category);
+  void checkLogicalAlignment(odb::dbChip* chip,
+                             odb::dbMarkerCategory* category);
+
+  bool isOverlapFullyInConnections(const UnfoldedModel& model,
+                                   const UnfoldedChip* chip1,
                                    const UnfoldedChip* chip2,
                                    const Cuboid& overlap) const;
-
+  void checkBumpPhysicalAlignment(const UnfoldedModel& model,
+                                  dbMarkerCategory* category);
   utl::Logger* logger_;
 };
 

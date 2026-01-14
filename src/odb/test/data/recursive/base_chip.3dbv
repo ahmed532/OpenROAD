@@ -1,0 +1,29 @@
+
+Header:
+  version: 2.5
+  unit: micron
+  precision: 2000
+
+ChipletDef:
+  BaseChip:
+    type: die
+    thickness: 200
+    design_area: [2000, 2000]
+    regions:
+      front_reg:
+        side: front
+        coords:
+          - [0, 0]
+          - [1000, 0]
+          - [1000, 1000]
+          - [0, 1000]
+      back_reg:
+        side: back
+        coords:
+          - [0, 0]
+          - [1000, 0]
+          - [1000, 1000]
+          - [0, 1000]
+    external:
+      APR_tech_file: [../../Nangate45/Nangate45_tech.lef]
+      LEF_file: [../../Nangate45/fake_macros.lef]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2023-2026, The OpenROAD Authors
+
 #include <string>
 
 #include "gtest/gtest.h"
@@ -66,7 +69,11 @@ TEST_F(CheckerFixture, test_overlapping_chips)
   auto category = top_chip_->findMarkerCategory("3DBlox");
   ASSERT_NE(category, nullptr);
 
-  auto overlapping_category = category->findMarkerCategory("Overlapping chips");
+  auto physical_category = category->findMarkerCategory("Physical");
+  ASSERT_NE(physical_category, nullptr);
+
+  auto overlapping_category
+      = physical_category->findMarkerCategory("Overlapping chips");
   ASSERT_NE(overlapping_category, nullptr);
 
   auto markers = overlapping_category->getMarkers();
@@ -121,7 +128,11 @@ TEST_F(CheckerFixture, test_floating_chips)
   auto category = top_chip_->findMarkerCategory("3DBlox");
   ASSERT_NE(category, nullptr);
 
-  auto floating_category = category->findMarkerCategory("Floating chips");
+  auto connectivity_category = category->findMarkerCategory("Connectivity");
+  ASSERT_NE(connectivity_category, nullptr);
+
+  auto floating_category
+      = connectivity_category->findMarkerCategory("Floating chips");
   ASSERT_NE(floating_category, nullptr);
 
   auto markers = floating_category->getMarkers();
@@ -161,16 +172,24 @@ TEST_F(CheckerFixture, test_no_violations)
   auto category = top_chip_->findMarkerCategory("3DBlox");
   ASSERT_NE(category, nullptr);
 
-  auto overlapping_category = category->findMarkerCategory("Overlapping chips");
-  if (overlapping_category != nullptr) {
-    auto markers = overlapping_category->getMarkers();
-    EXPECT_EQ(markers.size(), 0);
+  auto physical_category = category->findMarkerCategory("Physical");
+  if (physical_category != nullptr) {
+    auto overlapping_category
+        = physical_category->findMarkerCategory("Overlapping chips");
+    if (overlapping_category != nullptr) {
+      auto markers = overlapping_category->getMarkers();
+      EXPECT_EQ(markers.size(), 0);
+    }
   }
 
-  auto floating_category = category->findMarkerCategory("Floating chips");
-  if (floating_category != nullptr) {
-    auto markers = floating_category->getMarkers();
-    EXPECT_EQ(markers.size(), 0);
+  auto connectivity_category = category->findMarkerCategory("Connectivity");
+  if (connectivity_category != nullptr) {
+    auto floating_category
+        = connectivity_category->findMarkerCategory("Floating chips");
+    if (floating_category != nullptr) {
+      auto markers = floating_category->getMarkers();
+      EXPECT_EQ(markers.size(), 0);
+    }
   }
 }
 
@@ -204,14 +223,22 @@ TEST_F(CheckerFixture, test_multiple_violations)
   auto category = top_chip_->findMarkerCategory("3DBlox");
   ASSERT_NE(category, nullptr);
 
+  auto physical_category = category->findMarkerCategory("Physical");
+  ASSERT_NE(physical_category, nullptr);
+
   // Check overlapping chips
-  auto overlapping_category = category->findMarkerCategory("Overlapping chips");
+  auto overlapping_category
+      = physical_category->findMarkerCategory("Overlapping chips");
   ASSERT_NE(overlapping_category, nullptr);
   auto overlapping_markers = overlapping_category->getMarkers();
   EXPECT_GT(overlapping_markers.size(), 0);
 
+  auto connectivity_category = category->findMarkerCategory("Connectivity");
+  ASSERT_NE(connectivity_category, nullptr);
+
   // Check floating chips
-  auto floating_category = category->findMarkerCategory("Floating chips");
+  auto floating_category
+      = connectivity_category->findMarkerCategory("Floating chips");
   ASSERT_NE(floating_category, nullptr);
   auto floating_markers = floating_category->getMarkers();
   EXPECT_EQ(floating_markers.size(), 1);

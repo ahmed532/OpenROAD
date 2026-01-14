@@ -1,0 +1,30 @@
+Header:
+  version: "1.0"
+  unit: micron
+  precision: 2000
+  include:
+    - leaf.3dbv
+
+Design:
+  name: "SubMidChip"
+
+ChipletInst:
+  l1:
+    reference: LeafChip
+  l2:
+    reference: LeafChip
+
+Stack:
+  l1:
+    loc: [0, 0]
+    z: 300
+    orient: R0
+  l2:
+    loc: [0, 0] 
+    z: 0
+    orient: R0
+
+Connection:
+  sub_conn:
+    top: l1.regions.back_reg
+    bot: l2.regions.front_reg

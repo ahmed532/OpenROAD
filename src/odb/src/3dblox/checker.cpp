@@ -5,37 +5,221 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <map>
+#include <memory>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "odb/db.h"
+#include "odb/geom.h"
+#include "sta/Network.hh"
+#include "sta/Sta.hh"
 #include "unfoldedModel.h"
 #include "utl/Logger.h"
 #include "utl/unionFind.h"
 
 namespace odb {
 
+// Marker size (in database units) for bump alignment violations.
+// Uses a small fixed size since bumps are point-like features.
+constexpr int kBumpMarkerHalfSize = 50;
+
+// RAII guard to prevent sta::Sta destructor from crashing by clearing
+// ReportTcl. IMPORTANT: This guard must be declared AFTER the sta::Sta
+// unique_ptr to ensure proper destruction order (guard destructs first, then
+// sta).
+class StaReportGuard
+{
+ public:
+  explicit StaReportGuard(sta::Sta* s) : sta_(s) {}
+  ~StaReportGuard()
+  {
+    if (sta_) {
+      sta_->setReport(nullptr);
+    }
+  }
+  // Non-copyable, non-movable
+  StaReportGuard(const StaReportGuard&) = delete;
+  StaReportGuard& operator=(const StaReportGuard&) = delete;
+
+ private:
+  sta::Sta* sta_;
+};
+
 Checker::Checker(utl::Logger* logger) : logger_(logger)
 {
 }
 
-void Checker::check(odb::dbChip* chip)
+void Checker::check(odb::dbChip* chip, int bump_pitch_tolerance)
 {
   UnfoldedModel model(logger_, chip);
-
-  odb::dbMarkerCategory* category
+  odb::dbMarkerCategory* top_category
       = odb::dbMarkerCategory::createOrReplace(chip, "3DBlox");
-  checkFloatingChips(model, category);
-  checkOverlappingChips(model, category);
+
+  odb::dbMarkerCategory* conn_category
+      = odb::dbMarkerCategory::createOrReplace(top_category, "Connectivity");
+  odb::dbMarkerCategory* phys_category
+      = odb::dbMarkerCategory::createOrReplace(top_category, "Physical");
+  odb::dbMarkerCategory* logical_category
+      = odb::dbMarkerCategory::createOrReplace(top_category, "Logical");
+
+  checkFloatingChips(model, conn_category);
+  checkOverlappingChips(model, phys_category);
+  checkConnectionRegions(model, chip, conn_category);
+  checkInternalExtUsage(model, conn_category);
+
+  checkBumpPhysicalAlignment(model, phys_category);
+  checkNetConnectivity(model, chip, conn_category, bump_pitch_tolerance);
+  checkConnectivity(chip, logical_category);
+  checkLogicalAlignment(chip, logical_category);
+}
+
+void Checker::checkConnectivity(odb::dbChip* chip,
+                                odb::dbMarkerCategory* category)
+{
+  // Use a local STA instance to avoid interference with the global OpenROAD
+  // DB/STA state. We are parsing an external Verilog file that represents a
+  // chiplet, which might not be part of the currently loaded top-level design
+  // hierarchy in the way dbSta expects.
+  // Initialize ONCE outside the loop for performance.
+  // Note: This approach accumulates STA state for multiple chiplets.
+  // For massive 3D systems with many large netlists, this could lead to high
+  // memory usage. Since chiplets are often black-boxes/IO models, we prioritize
+  // speed over clearing state between iterations.
+  auto local_sta = std::make_unique<sta::Sta>();
+  local_sta->makeComponents();
+  StaReportGuard guard(local_sta.get());
+
+  std::set<std::string> loaded_files;
+  std::set<odb::dbChip*> processed_chips;
+
+  for (auto chip_inst : chip->getChipInsts()) {
+    odb::dbChip* master_prop = chip_inst->getMasterChip();
+
+    // We want the ChipletDef (master)
+    if (processed_chips.contains(master_prop)) {
+      continue;
+    }
+    processed_chips.insert(master_prop);
+
+    // Check if property exists
+    odb::dbProperty* prop = odb::dbProperty::find(master_prop, "verilog_file");
+    if (!prop || prop->getType() != odb::dbProperty::STRING_PROP) {
+      continue;
+    }
+    odb::dbStringProperty* sProp = static_cast<odb::dbStringProperty*>(prop);
+    std::string verilog_file = sProp->getValue();
+
+    // Read verilog if not already loaded
+    if (!loaded_files.contains(verilog_file)) {
+      logger_->info(utl::ODB,
+                    552,
+                    "Reading Verilog file {} for design {}",
+                    std::filesystem::path(verilog_file).filename().string(),
+                    master_prop->getName());
+      if (!local_sta->readVerilog(verilog_file.c_str())) {
+        logger_->warn(
+            utl::ODB, 553, "Failed to read Verilog file {}", verilog_file);
+        // If the file failed to load, we mark it as processed to suppress
+        // identical errors for subsequent instances.
+      }
+      loaded_files.insert(verilog_file);
+    }
+
+    // We assume the design name matches the master name (Rule 1)
+    std::string design_name = master_prop->getName();
+    sta::Network* network = local_sta->network();
+    sta::Cell* top_cell = nullptr;
+    sta::LibraryIterator* lib_iter = network->libraryIterator();
+    while (lib_iter->hasNext()) {
+      sta::Library* lib = lib_iter->next();
+      top_cell = network->findCell(lib, design_name.c_str());
+      if (top_cell) {
+        break;
+      }
+    }
+    delete lib_iter;
+
+    if (!top_cell) {
+      odb::dbMarkerCategory* design_cat
+          = odb::dbMarkerCategory::createOrGet(category, "Design Alignment");
+      odb::dbMarker* marker = odb::dbMarker::create(design_cat);
+      marker->setComment(
+          fmt::format("Verilog module {} not found in file {} (Rule 1)",
+                      design_name,
+                      verilog_file));
+      marker->addSource(master_prop);
+
+      logger_->warn(utl::ODB,
+                    550,
+                    "Failed to find Verilog module {} in file {}.",
+                    design_name,
+                    verilog_file);
+      continue;
+    }
+
+    // Iterate ports (terms) of the cell directly.
+    // This avoids needing to link the design (which requires leaf libraries).
+    sta::CellPortBitIterator* port_iter = network->portBitIterator(top_cell);
+    while (port_iter->hasNext()) {
+      sta::Port* port = port_iter->next();
+      const char* port_name = network->name(port);
+
+      // Check if exists
+      bool exists = false;
+      for (auto ec_net : master_prop->getChipNets()) {
+        if (ec_net->getName() == port_name) {
+          exists = true;
+          break;
+        }
+      }
+
+      if (!exists) {
+        odb::dbChipNet::create(master_prop, port_name);
+        debugPrint(logger_,
+                   utl::ODB,
+                   "3dblox",
+                   1,
+                   "Created dbChipNet {} for chip {}",
+                   port_name,
+                   design_name);
+      }
+    }
+    delete port_iter;
+  }
 }
 
 void Checker::checkFloatingChips(const UnfoldedModel& model,
                                  odb::dbMarkerCategory* category)
 {
   const auto& chips = model.getChips();
+  const auto& connections = model.getConnections();
   utl::UnionFind uf(chips.size());
 
+  // 1. Union chips connected by valid connections
+  for (const auto& conn : connections) {
+    if (conn.isValid() && conn.top_region && conn.bottom_region) {
+      // Find indices of top and bottom chips in the deque
+      int top_idx = -1;
+      int bot_idx = -1;
+      for (size_t i = 0; i < chips.size(); i++) {
+        if (&chips[i] == conn.top_region->parent_chip) {
+          top_idx = (int) i;
+        }
+        if (&chips[i] == conn.bottom_region->parent_chip) {
+          bot_idx = (int) i;
+        }
+      }
+      if (top_idx != -1 && bot_idx != -1) {
+        uf.unite(top_idx, bot_idx);
+      }
+    }
+  }
+
+  // 2. Union chips physically touching
   for (size_t i = 0; i < chips.size(); i++) {
     auto cuboid_i = chips[i].cuboid;
     for (size_t j = i + 1; j < chips.size(); j++) {
@@ -66,10 +250,9 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
 
     odb::dbMarkerCategory* floating_chips_category
         = odb::dbMarkerCategory::createOrReplace(category, "Floating chips");
-    logger_->warn(utl::ODB,
-                  151,
-                  "Found {} floating chip sets",
-                  (int) insts_sets.size() - 1);
+    int num_floating_sets = static_cast<int>(insts_sets.size()) - 1;
+    logger_->warn(
+        utl::ODB, 151, "Found {} floating chip sets", num_floating_sets);
 
     for (size_t i = 1; i < insts_sets.size(); i++) {
       auto& insts_set = insts_sets[i];
@@ -81,6 +264,8 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
                               inst->cuboid.yMax()));
         marker->addSource(inst->chip_inst_path.back());
       }
+      marker->setComment("Isolated chip set starting with "
+                         + insts_set[0]->getName());
     }
   }
 }
@@ -96,7 +281,11 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
     for (size_t j = i + 1; j < chips.size(); j++) {
       auto cuboid_j = chips[j].cuboid;
       if (cuboid_i.overlaps(cuboid_j)) {
-        overlaps.emplace_back(&chips[i], &chips[j]);
+        auto intersection = cuboid_i.intersect(cuboid_j);
+        if (!isOverlapFullyInConnections(
+                model, &chips[i], &chips[j], intersection)) {
+          overlaps.emplace_back(&chips[i], &chips[j]);
+        }
       }
     }
   }
@@ -134,23 +323,254 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
                                      dbChip* chip,
                                      dbMarkerCategory* category)
 {
+  const auto& connections = model.getConnections();
+  odb::dbMarkerCategory* invalid_conn_category
+      = odb::dbMarkerCategory::createOrReplace(category, "Connected regions");
+
+  int non_intersecting_count = 0;
+
+  for (const auto& conn : connections) {
+    bool has_missing_region = (!conn.top_region || !conn.bottom_region)
+                              && !conn.is_bterm_connection;
+
+    // Skip marker and warning for intentional virtual connections
+    // If it's virtual in 3dblox, it will have a nullptr in the dbChipConn for
+    // one of the regions
+    if (has_missing_region) {
+      if (conn.connection->getTopRegion() == nullptr
+          || conn.connection->getBottomRegion() == nullptr) {
+        continue;
+      }
+      std::string top_status = conn.top_region ? "found" : "null";
+      std::string bot_status = conn.bottom_region ? "found" : "null";
+      logger_->warn(utl::ODB,
+                    404,
+                    "Connection {} has missing regions (top: {}, bottom: {})",
+                    conn.connection->getName(),
+                    top_status,
+                    bot_status);
+      continue;
+    }
+
+    if (!conn.isValid()) {
+      odb::dbMarker* marker = odb::dbMarker::create(invalid_conn_category);
+      marker->addSource(conn.connection);
+
+      if (conn.top_region) {
+        marker->addSource(conn.top_region->region_inst);
+        marker->addShape(Rect(conn.top_region->cuboid.xMin(),
+                              conn.top_region->cuboid.yMin(),
+                              conn.top_region->cuboid.xMax(),
+                              conn.top_region->cuboid.yMax()));
+      }
+      if (conn.bottom_region) {
+        marker->addSource(conn.bottom_region->region_inst);
+        marker->addShape(Rect(conn.bottom_region->cuboid.xMin(),
+                              conn.bottom_region->cuboid.yMin(),
+                              conn.bottom_region->cuboid.xMax(),
+                              conn.bottom_region->cuboid.yMax()));
+      }
+
+      marker->setComment("Invalid connection: " + conn.connection->getName());
+      non_intersecting_count++;
+    }
+  }
+
+  if (non_intersecting_count > 0) {
+    logger_->warn(utl::ODB,
+                  206,
+                  "Found {} non-intersecting connections",
+                  non_intersecting_count);
+  }
+}
+
+void Checker::checkInternalExtUsage(const UnfoldedModel& model,
+                                    dbMarkerCategory* category)
+{
+  odb::dbMarkerCategory* unused_ext_category
+      = odb::dbMarkerCategory::createOrReplace(category, "UnusedInternalExt");
+
+  for (const auto& chip : model.getChips()) {
+    for (const auto& region : chip.regions) {
+      if (region.isInternalExt() && !region.isUsed) {
+        logger_->warn(utl::ODB,
+                      464,
+                      "Region {} is INTERNAL_EXT but not included in any "
+                      "Connectivity declaration.",
+                      region.region_inst->getChipRegion()->getName());
+        odb::dbMarker* marker = odb::dbMarker::create(unused_ext_category);
+        marker->addSource(region.region_inst);
+        marker->addShape(Rect(region.cuboid.xMin(),
+                              region.cuboid.yMin(),
+                              region.cuboid.xMax(),
+                              region.cuboid.yMax()));
+        marker->setComment("Unused INTERNAL_EXT region: "
+                           + region.region_inst->getChipRegion()->getName());
+      }
+    }
+  }
 }
 
 void Checker::checkBumpPhysicalAlignment(const UnfoldedModel& model,
                                          dbMarkerCategory* category)
 {
+  // Rule 3: Physical alignment check
+  // Verify that bumps are located within their parent region's footprint
+
+  odb::dbMarkerCategory* alignment_category
+      = odb::dbMarkerCategory::createOrReplace(category, "BumpAlignment");
+
+  for (const auto& chip : model.getChips()) {
+    for (const auto& region : chip.regions) {
+      for (const auto& bump : region.bumps) {
+        // Check if bump global XY is inside region global XY
+        int x = bump.global_position.x();
+        int y = bump.global_position.y();
+
+        if (x < region.cuboid.xMin() || x > region.cuboid.xMax()
+            || y < region.cuboid.yMin() || y > region.cuboid.yMax()) {
+          odb::dbMarker* marker = odb::dbMarker::create(alignment_category);
+          if (bump.bump_inst) {
+            marker->addSource(bump.bump_inst);
+          } else {
+            marker->addSource(region.region_inst);  // Fallback
+          }
+          marker->addShape(Rect(x - kBumpMarkerHalfSize,
+                                y - kBumpMarkerHalfSize,
+                                x + kBumpMarkerHalfSize,
+                                y + kBumpMarkerHalfSize));
+
+          std::string msg = "Bump is outside its parent region "
+                            + region.region_inst->getChipRegion()->getName();
+          marker->setComment(msg);
+        }
+      }
+    }
+  }
 }
 
 void Checker::checkNetConnectivity(const UnfoldedModel& model,
                                    dbChip* chip,
-                                   dbMarkerCategory* category)
+                                   dbMarkerCategory* category,
+                                   int bump_pitch_tolerance)
 {
+  odb::dbMarkerCategory* open_net_category
+      = odb::dbMarkerCategory::createOrReplace(category, "OpenNet");
+
+  // For each net, check if all bumps are connected via valid physical paths.
+  // Uses UnfoldedNet::getDisconnectedBumps() which performs Union-Find analysis
+  // to identify bumps that are not physically connected to the main cluster.
+  for (const auto& net : model.getNets()) {
+    if (net.connected_bumps.size() < 2) {
+      continue;
+    }
+
+    auto disconnected = net.getDisconnectedBumps(model.getConnections(),
+                                                 bump_pitch_tolerance);
+    if (!disconnected.empty()) {
+      odb::dbMarker* marker = odb::dbMarker::create(open_net_category);
+      marker->addSource(net.chip_net);
+      marker->setComment(
+          fmt::format("Net {} has {} disconnected bump(s) out of {} total.",
+                      net.chip_net->getName(),
+                      disconnected.size(),
+                      net.connected_bumps.size()));
+
+      for (auto* bump : disconnected) {
+        if (bump->bump_inst) {
+          marker->addSource(bump->bump_inst);
+        }
+      }
+    }
+  }
 }
 
-bool Checker::isOverlapFullyInConnections(const UnfoldedChip* chip1,
+void Checker::checkLogicalAlignment(odb::dbChip* chip,
+                                    odb::dbMarkerCategory* parent_category)
+{
+  std::set<odb::dbChip*> processed_masters;
+  odb::dbMarkerCategory* alignment_category
+      = odb::dbMarkerCategory::createOrGet(parent_category,
+                                           "Logical Alignment");
+
+  for (auto chip_inst : chip->getChipInsts()) {
+    auto master = chip_inst->getMasterChip();
+    if (processed_masters.contains(master)) {
+      continue;
+    }
+    processed_masters.insert(master);
+
+    // Check regions
+    for (auto region : master->getChipRegions()) {
+      for (auto bump : region->getChipBumps()) {
+        odb::dbProperty* prop = odb::dbProperty::find(bump, "logical_net");
+        if (!prop || prop->getType() != odb::dbProperty::STRING_PROP) {
+          continue;
+        }
+
+        std::string logical_net
+            = static_cast<odb::dbStringProperty*>(prop)->getValue();
+
+        bool found = false;
+        for (const auto& net : master->getChipNets()) {
+          if (net->getName() == logical_net) {
+            found = true;
+            break;
+          }
+        }
+
+        if (!found) {
+          odb::dbMarker* marker = odb::dbMarker::create(alignment_category);
+          std::string msg
+              = "Logical net " + logical_net + " not found in Verilog";
+          marker->setComment(msg);
+          marker->addSource(bump);
+
+          logger_->warn(utl::ODB,
+                        560,
+                        "Logical net {} in bmap for chiplet {} not found in "
+                        "Verilog",
+                        logical_net,
+                        master->getName());
+        }
+      }
+    }
+  }
+}
+
+bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
+                                          const UnfoldedChip* chip1,
                                           const UnfoldedChip* chip2,
                                           const Cuboid& overlap) const
 {
+  for (const auto& conn : model.getConnections()) {
+    if (!conn.isValid()) {
+      continue;
+    }
+
+    UnfoldedRegionFull* r1 = conn.top_region;
+    UnfoldedRegionFull* r2 = conn.bottom_region;
+
+    if (!r1 || !r2) {
+      continue;
+    }
+
+    bool match = (r1->parent_chip == chip1 && r2->parent_chip == chip2)
+                 || (r1->parent_chip == chip2 && r2->parent_chip == chip1);
+
+    if (match) {
+      // If one of the regions is INTERNAL_EXT, it authorizes the overlap
+      // of its parent chip with the other chip, but only within the region's
+      // footprint.
+      if (r1->isInternalExt() && r1->cuboid.contains(overlap)) {
+        return true;
+      }
+      if (r2->isInternalExt() && r2->cuboid.contains(overlap)) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
