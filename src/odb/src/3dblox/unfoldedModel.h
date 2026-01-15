@@ -74,6 +74,7 @@ struct UnfoldedNet
       connected_bumps;  // non-owning, points to UnfoldedRegionFull::bumps
 
   std::vector<UnfoldedBump*> getDisconnectedBumps(
+      utl::Logger* logger,
       const std::deque<UnfoldedConnection>& connections,
       int bump_pitch_tolerance) const;
 };
@@ -90,6 +91,8 @@ struct UnfoldedChip
   std::deque<UnfoldedRegionFull> regions;  // owning container
   std::vector<UnfoldedConnection*>
       connected_conns;  // non-owning, points to unfolded_connections_
+
+  std::unordered_map<dbChipRegionInst*, UnfoldedRegionFull*> region_map;
 };
 
 class UnfoldedModel
@@ -131,6 +134,7 @@ class UnfoldedModel
   std::deque<UnfoldedConnection> unfolded_connections_;
   std::deque<UnfoldedNet> unfolded_nets_;
   std::map<std::string, UnfoldedChip*> chip_path_map_;
+  std::unordered_map<dbChipBumpInst*, UnfoldedBump*> bump_inst_map_;
 };
 
 }  // namespace odb

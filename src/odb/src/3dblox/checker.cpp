@@ -8,14 +8,18 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "odb/db.h"
 #include "odb/geom.h"
 #include "sta/Network.hh"
+#include "sta/PatternMatch.hh"
 #include "sta/Sta.hh"
 #include "unfoldedModel.h"
 #include "utl/Logger.h"
@@ -27,14 +31,30 @@ namespace odb {
 // Uses a small fixed size since bumps are point-like features.
 constexpr int kBumpMarkerHalfSize = 50;
 
+static std::string sideToString(odb::dbChipRegion::Side side)
+{
+  switch (side) {
+    case odb::dbChipRegion::Side::FRONT:
+      return "FRONT";
+    case odb::dbChipRegion::Side::BACK:
+      return "BACK";
+    case odb::dbChipRegion::Side::INTERNAL:
+      return "INTERNAL";
+    case odb::dbChipRegion::Side::INTERNAL_EXT:
+      return "INTERNAL_EXT";
+  }
+  return "UNKNOWN";
+}
+
 // RAII guard to prevent sta::Sta destructor from crashing by clearing
-// ReportTcl. IMPORTANT: This guard must be declared AFTER the sta::Sta
-// unique_ptr to ensure proper destruction order (guard destructs first, then
-// sta).
+// ReportTcl.
 class StaReportGuard
 {
  public:
-  explicit StaReportGuard(sta::Sta* s) : sta_(s) {}
+  StaReportGuard() : sta_(std::make_unique<sta::Sta>())
+  {
+    sta_->makeComponents();
+  }
   ~StaReportGuard()
   {
     if (sta_) {
@@ -45,8 +65,11 @@ class StaReportGuard
   StaReportGuard(const StaReportGuard&) = delete;
   StaReportGuard& operator=(const StaReportGuard&) = delete;
 
+  sta::Sta* operator->() const { return sta_.get(); }
+  sta::Sta* get() const { return sta_.get(); }
+
  private:
-  sta::Sta* sta_;
+  std::unique_ptr<sta::Sta> sta_;
 };
 
 Checker::Checker(utl::Logger* logger) : logger_(logger)
@@ -89,9 +112,7 @@ void Checker::checkConnectivity(odb::dbChip* chip,
   // For massive 3D systems with many large netlists, this could lead to high
   // memory usage. Since chiplets are often black-boxes/IO models, we prioritize
   // speed over clearing state between iterations.
-  auto local_sta = std::make_unique<sta::Sta>();
-  local_sta->makeComponents();
-  StaReportGuard guard(local_sta.get());
+  StaReportGuard local_sta;
 
   std::set<std::string> loaded_files;
   std::set<odb::dbChip*> processed_chips;
@@ -115,11 +136,12 @@ void Checker::checkConnectivity(odb::dbChip* chip,
 
     // Read verilog if not already loaded
     if (!loaded_files.contains(verilog_file)) {
-      logger_->info(utl::ODB,
-                    552,
-                    "Reading Verilog file {} for design {}",
-                    std::filesystem::path(verilog_file).filename().string(),
-                    master_prop->getName());
+      logger_->info(
+          utl::ODB,
+          552,
+          "Reading Verilog file {} for design {}",
+          std::filesystem::path(verilog_file).filename().string().c_str(),
+          master_prop->getName());
       if (!local_sta->readVerilog(verilog_file.c_str())) {
         logger_->warn(
             utl::ODB, 553, "Failed to read Verilog file {}", verilog_file);
@@ -134,11 +156,19 @@ void Checker::checkConnectivity(odb::dbChip* chip,
     sta::Network* network = local_sta->network();
     sta::Cell* top_cell = nullptr;
     sta::LibraryIterator* lib_iter = network->libraryIterator();
+    std::vector<std::string> available_modules;
+
     while (lib_iter->hasNext()) {
       sta::Library* lib = lib_iter->next();
       top_cell = network->findCell(lib, design_name.c_str());
       if (top_cell) {
         break;
+      }
+      // Gather available module names for diagnostics
+      sta::PatternMatch all_cells("*");
+      sta::CellSeq cells = network->findCellsMatching(lib, &all_cells);
+      for (sta::Cell* cell : cells) {
+        available_modules.push_back(network->name(cell));
       }
     }
     delete lib_iter;
@@ -147,37 +177,43 @@ void Checker::checkConnectivity(odb::dbChip* chip,
       odb::dbMarkerCategory* design_cat
           = odb::dbMarkerCategory::createOrGet(category, "Design Alignment");
       odb::dbMarker* marker = odb::dbMarker::create(design_cat);
-      marker->setComment(
-          fmt::format("Verilog module {} not found in file {} (Rule 1)",
-                      design_name,
-                      verilog_file));
+      std::string modules_list
+          = available_modules.empty()
+                ? "None"
+                : fmt::format("{}", fmt::join(available_modules, ", "));
+
+      marker->setComment(fmt::format(
+          "Rule 1 Violation: Verilog module {} not found in file {}. "
+          "Available modules: {}",
+          design_name,
+          verilog_file,
+          modules_list));
       marker->addSource(master_prop);
 
-      logger_->warn(utl::ODB,
-                    550,
-                    "Failed to find Verilog module {} in file {}.",
-                    design_name,
-                    verilog_file);
+      logger_->warn(
+          utl::ODB,
+          550,
+          "Rule 1 Violation: Failed to find Verilog module {} in file {}. "
+          "Available modules: {}",
+          design_name,
+          verilog_file,
+          modules_list);
       continue;
     }
 
+    // Build a set of existing chip net names for O(1) lookup
+    std::unordered_set<std::string> existing_nets;
+    for (auto* ec_net : master_prop->getChipNets()) {
+      existing_nets.insert(ec_net->getName());
+    }
+
     // Iterate ports (terms) of the cell directly.
-    // This avoids needing to link the design (which requires leaf libraries).
     sta::CellPortBitIterator* port_iter = network->portBitIterator(top_cell);
     while (port_iter->hasNext()) {
       sta::Port* port = port_iter->next();
       const char* port_name = network->name(port);
 
-      // Check if exists
-      bool exists = false;
-      for (auto ec_net : master_prop->getChipNets()) {
-        if (ec_net->getName() == port_name) {
-          exists = true;
-          break;
-        }
-      }
-
-      if (!exists) {
+      if (!existing_nets.contains(port_name)) {
         odb::dbChipNet::create(master_prop, port_name);
         debugPrint(logger_,
                    utl::ODB,
@@ -200,32 +236,39 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
   utl::UnionFind uf(chips.size());
 
   // 1. Union chips connected by valid connections
+  std::unordered_map<const UnfoldedChip*, int> chip_to_idx;
+  for (size_t i = 0; i < chips.size(); i++) {
+    chip_to_idx[&chips[i]] = static_cast<int>(i);
+  }
+
   for (const auto& conn : connections) {
     if (conn.isValid() && conn.top_region && conn.bottom_region) {
-      // Find indices of top and bottom chips in the deque
-      int top_idx = -1;
-      int bot_idx = -1;
-      for (size_t i = 0; i < chips.size(); i++) {
-        if (&chips[i] == conn.top_region->parent_chip) {
-          top_idx = (int) i;
-        }
-        if (&chips[i] == conn.bottom_region->parent_chip) {
-          bot_idx = (int) i;
-        }
-      }
-      if (top_idx != -1 && bot_idx != -1) {
-        uf.unite(top_idx, bot_idx);
+      auto it_top = chip_to_idx.find(conn.top_region->parent_chip);
+      auto it_bot = chip_to_idx.find(conn.bottom_region->parent_chip);
+      if (it_top != chip_to_idx.end() && it_bot != chip_to_idx.end()) {
+        uf.unite(it_top->second, it_bot->second);
       }
     }
   }
 
   // 2. Union chips physically touching
-  for (size_t i = 0; i < chips.size(); i++) {
-    auto cuboid_i = chips[i].cuboid;
-    for (size_t j = i + 1; j < chips.size(); j++) {
-      auto cuboid_j = chips[j].cuboid;
-      if (cuboid_i.intersects(cuboid_j)) {
-        uf.unite(i, j);
+  // Use a simple sort-on-X sweep to reduce O(N^2)
+  std::vector<size_t> sorted_indices(chips.size());
+  std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
+  std::ranges::sort(sorted_indices, [&](size_t a, size_t b) {
+    return chips[a].cuboid.xMin() < chips[b].cuboid.xMin();
+  });
+
+  for (size_t i = 0; i < sorted_indices.size(); i++) {
+    size_t idx_i = sorted_indices[i];
+    auto cuboid_i = chips[idx_i].cuboid;
+    for (size_t j = i + 1; j < sorted_indices.size(); j++) {
+      size_t idx_j = sorted_indices[j];
+      if (chips[idx_j].cuboid.xMin() > cuboid_i.xMax()) {
+        break;  // Cannot intersect any more chips in sorted order
+      }
+      if (cuboid_i.intersects(chips[idx_j].cuboid)) {
+        uf.unite(static_cast<int>(idx_i), static_cast<int>(idx_j));
       }
     }
   }
@@ -276,15 +319,26 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
   const auto& chips = model.getChips();
   std::vector<std::pair<const UnfoldedChip*, const UnfoldedChip*>> overlaps;
 
-  for (size_t i = 0; i < chips.size(); i++) {
-    auto cuboid_i = chips[i].cuboid;
-    for (size_t j = i + 1; j < chips.size(); j++) {
-      auto cuboid_j = chips[j].cuboid;
+  std::vector<size_t> sorted_indices(chips.size());
+  std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
+  std::ranges::sort(sorted_indices, [&](size_t a, size_t b) {
+    return chips[a].cuboid.xMin() < chips[b].cuboid.xMin();
+  });
+
+  for (size_t i = 0; i < sorted_indices.size(); i++) {
+    size_t idx_i = sorted_indices[i];
+    auto cuboid_i = chips[idx_i].cuboid;
+    for (size_t j = i + 1; j < sorted_indices.size(); j++) {
+      size_t idx_j = sorted_indices[j];
+      if (chips[idx_j].cuboid.xMin() >= cuboid_i.xMax()) {
+        break;
+      }
+      auto cuboid_j = chips[idx_j].cuboid;
       if (cuboid_i.overlaps(cuboid_j)) {
         auto intersection = cuboid_i.intersect(cuboid_j);
         if (!isOverlapFullyInConnections(
-                model, &chips[i], &chips[j], intersection)) {
-          overlaps.emplace_back(&chips[i], &chips[j]);
+                model, &chips[idx_i], &chips[idx_j], intersection)) {
+          overlaps.emplace_back(&chips[idx_i], &chips[idx_j]);
         }
       }
     }
@@ -356,12 +410,20 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
       odb::dbMarker* marker = odb::dbMarker::create(invalid_conn_category);
       marker->addSource(conn.connection);
 
+      std::string top_info = "null";
+      std::string bot_info = "null";
+
       if (conn.top_region) {
         marker->addSource(conn.top_region->region_inst);
         marker->addShape(Rect(conn.top_region->cuboid.xMin(),
                               conn.top_region->cuboid.yMin(),
                               conn.top_region->cuboid.xMax(),
                               conn.top_region->cuboid.yMax()));
+        top_info = fmt::format(
+            "{}/{} (faces {})",
+            conn.top_region->parent_chip->getName(),
+            conn.top_region->region_inst->getChipRegion()->getName(),
+            sideToString(conn.top_region->effective_side));
       }
       if (conn.bottom_region) {
         marker->addSource(conn.bottom_region->region_inst);
@@ -369,9 +431,19 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
                               conn.bottom_region->cuboid.yMin(),
                               conn.bottom_region->cuboid.xMax(),
                               conn.bottom_region->cuboid.yMax()));
+        bot_info = fmt::format(
+            "{}/{} (faces {})",
+            conn.bottom_region->parent_chip->getName(),
+            conn.bottom_region->region_inst->getChipRegion()->getName(),
+            sideToString(conn.bottom_region->effective_side));
       }
 
-      marker->setComment("Invalid connection: " + conn.connection->getName());
+      std::string comment = fmt::format("Invalid connection {}: {} to {}",
+                                        conn.connection->getName(),
+                                        top_info,
+                                        bot_info);
+      marker->setComment(comment);
+      logger_->warn(utl::ODB, 207, comment);
       non_intersecting_count++;
     }
   }
@@ -465,8 +537,8 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
       continue;
     }
 
-    auto disconnected = net.getDisconnectedBumps(model.getConnections(),
-                                                 bump_pitch_tolerance);
+    auto disconnected = net.getDisconnectedBumps(
+        logger_, model.getConnections(), bump_pitch_tolerance);
     if (!disconnected.empty()) {
       odb::dbMarker* marker = odb::dbMarker::create(open_net_category);
       marker->addSource(net.chip_net);

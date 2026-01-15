@@ -10,6 +10,7 @@
 TOTAL CATEGORIES: 1
 TOTAL MARKERS: 0
 [WARNING ODB-0151] Found 1 floating chip sets
+[WARNING ODB-0207] Invalid connection soc_to_soc: soc_inst_duplicate/front_reg (faces BACK) to soc_inst/front_reg (faces FRONT)
 [WARNING ODB-0206] Found 1 non-intersecting connections
 [INFO ODB-0552] Reading Verilog file soc.v for design SoC
 Summary 2 / 2 (100% pass)

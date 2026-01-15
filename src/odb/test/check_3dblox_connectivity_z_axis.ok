@@ -2,9 +2,11 @@
 [INFO ODB-0227] LEF file: data/recursive/../../Nangate45/fake_macros.lef, created 10 library cells
 [WARNING ODB-0151] Found 1 floating chip sets
 [WARNING ODB-0156] Found 1 overlapping chips
+[WARNING ODB-0207] Invalid connection recur_conn: mid_inst1/leaf_inst/back_reg (faces BACK) to leaf_inst_top/front_reg (faces FRONT)
 [WARNING ODB-0206] Found 1 non-intersecting connections
 [WARNING ODB-0151] Found 1 floating chip sets
 [WARNING ODB-0156] Found 1 overlapping chips
+[WARNING ODB-0207] Invalid connection recur_conn: mid_inst1/leaf_inst/back_reg (faces BACK) to leaf_inst_top/front_reg (faces FRONT)
 [WARNING ODB-0206] Found 1 non-intersecting connections
 Summary 1 / 1 (100% pass)
 pass

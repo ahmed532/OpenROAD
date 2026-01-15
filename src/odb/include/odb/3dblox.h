@@ -64,6 +64,5 @@ class ThreeDBlox
   sta::Sta* sta_ = nullptr;
   std::unordered_set<odb::dbTech*> written_techs_;
   std::unordered_set<odb::dbLib*> written_libs_;
-  std::string current_dbx_file_;
 };
 }  // namespace odb

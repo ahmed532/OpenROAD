@@ -78,7 +78,6 @@ void ThreeDBlox::readDbv(const std::string& dbv_file)
 
 void ThreeDBlox::readDbx(const std::string& dbx_file)
 {
-  current_dbx_file_ = dbx_file;
   DbxParser parser(logger_);
   DbxData data = parser.parseFile(dbx_file);
   readHeaderIncludes(data.header.includes);

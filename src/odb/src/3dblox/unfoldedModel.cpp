@@ -8,6 +8,7 @@
 #include <map>
 #include <ranges>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "odb/db.h"
@@ -76,9 +77,6 @@ std::string chipTypeToString(odb::dbChip::ChipType type)
   }
   return "UNKNOWN";
 }
-
-}  // namespace
-namespace {
 
 static void applyTransform3D(odb::Point3D& point, odb::dbChipInst* inst)
 {
@@ -226,57 +224,67 @@ bool UnfoldedConnection::isValid() const
 }
 
 std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
+    utl::Logger* logger,
     const std::deque<UnfoldedConnection>& connections,
     int bump_pitch_tolerance) const
 {
   if (connected_bumps.size() < 2) {
-    return {};  // Nothing to check with fewer than 2 bumps
+    return {};
   }
 
-  // Use Union-Find to cluster bumps that are physically aligned.
-  // Bumps on the same chip are assumed connected via internal routing.
-  // Bumps on different chips are connected if:
-  // 1. Their parent regions have a VALID connection.
-  // 2. They are physically aligned within tolerance (XY).
-  // 3. They are within the connection Z-thickness range.
   utl::UnionFind uf(static_cast<int>(connected_bumps.size()));
 
+  // 1. Group bumps by region
+  std::map<UnfoldedRegion*, std::vector<size_t>> bumps_by_region;
   for (size_t i = 0; i < connected_bumps.size(); i++) {
-    for (size_t j = i + 1; j < connected_bumps.size(); j++) {
-      const auto* b1 = connected_bumps[i];
-      const auto* b2 = connected_bumps[j];
+    bumps_by_region[connected_bumps[i]->parent_region].push_back(i);
+  }
 
-      // Same chip: assumed connected via on-die routing
-      if (b1->parent_region->parent_chip == b2->parent_region->parent_chip) {
-        uf.unite(static_cast<int>(i), static_cast<int>(j));
-        continue;
-      }
+  // 2. Group regions by chip to unite bumps on the same chip
+  std::map<UnfoldedChip*, std::vector<UnfoldedRegion*>> regions_by_chip;
+  for (auto& [region, _] : bumps_by_region) {
+    regions_by_chip[region->parent_chip].push_back(region);
+  }
 
-      // Different chips: check for valid region connection
-      const UnfoldedConnection* valid_conn = nullptr;
-      for (const auto& conn : connections) {
-        if (!conn.isValid()) {
-          continue;
-        }
-        bool match = (conn.top_region == b1->parent_region
-                      && conn.bottom_region == b2->parent_region)
-                     || (conn.top_region == b2->parent_region
-                         && conn.bottom_region == b1->parent_region);
-        if (match) {
-          valid_conn = &conn;
-          break;
+  for (auto& [chip, regions] : regions_by_chip) {
+    int first_idx = -1;
+    for (auto* region : regions) {
+      for (size_t idx : bumps_by_region.at(region)) {
+        if (first_idx == -1) {
+          first_idx = static_cast<int>(idx);
+        } else {
+          uf.unite(first_idx, static_cast<int>(idx));
         }
       }
+    }
+  }
 
-      if (valid_conn) {
-        // Check Geometric Alignment
-        int dx = std::abs(b1->global_position.x() - b2->global_position.x());
-        int dy = std::abs(b1->global_position.y() - b2->global_position.y());
-        int dz = std::abs(b1->global_position.z() - b2->global_position.z());
+  // 3. Check connectivity between regions across chips
+  for (const auto& conn : connections) {
+    if (!conn.isValid()) {
+      continue;
+    }
+    auto it1 = bumps_by_region.find(conn.top_region);
+    auto it2 = bumps_by_region.find(conn.bottom_region);
 
-        if (dx <= bump_pitch_tolerance && dy <= bump_pitch_tolerance
-            && dz <= valid_conn->connection->getThickness()) {
-          uf.unite(static_cast<int>(i), static_cast<int>(j));
+    if (it1 != bumps_by_region.end() && it2 != bumps_by_region.end()) {
+      const auto& idxs1 = it1->second;
+      const auto& idxs2 = it2->second;
+
+      // Check Z distance between regions
+      int dz = std::abs(connected_bumps[idxs1[0]]->global_position.z()
+                        - connected_bumps[idxs2[0]]->global_position.z());
+
+      if (dz <= conn.connection->getThickness()) {
+        for (size_t i1 : idxs1) {
+          const auto& p1 = connected_bumps[i1]->global_position;
+          for (size_t i2 : idxs2) {
+            const auto& p2 = connected_bumps[i2]->global_position;
+            if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
+                && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
+              uf.unite(static_cast<int>(i1), static_cast<int>(i2));
+            }
+          }
         }
       }
     }
@@ -422,7 +430,7 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
           utl::ODB,
           463,
           "Chip {} of type {} cannot have INTERNAL/INTERNAL_EXT region {}",
-          unfolded_chip.getName(),
+          unfolded_chip.getName().c_str(),
           chipTypeToString(chip_type),
           region_inst->getChipRegion()->getName());
     }
@@ -435,8 +443,10 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
   UnfoldedChip* stable_chip_ptr = &unfolded_chips_.back();
   for (auto& region : stable_chip_ptr->regions) {
     region.parent_chip = stable_chip_ptr;
+    stable_chip_ptr->region_map[region.region_inst] = &region;
     for (auto& bump : region.bumps) {
       bump.parent_region = &region;
+      bump_inst_map_[bump.bump_inst] = &bump;
     }
   }
   chip_path_map_[stable_chip_ptr->getPathKey()] = stable_chip_ptr;
@@ -450,14 +460,20 @@ void UnfoldedModel::unfoldBumps(UnfoldedRegionFull& uf_region,
 {
   dbChipRegion* region = uf_region.region_inst->getChipRegion();
 
-  for (auto* bump : region->getChipBumps()) {
+  auto bumps = region->getChipBumps();
+
+  // Pre-map bump instances to their definitions for O(1) lookup
+  std::unordered_map<dbChipBump*, dbChipBumpInst*> bump_to_inst;
+  for (auto* bi : uf_region.region_inst->getChipBumpInsts()) {
+    bump_to_inst[bi->getChipBump()] = bi;
+  }
+
+  for (auto* bump : bumps) {
     UnfoldedBump uf_bump;
     uf_bump.bump_inst = nullptr;
-    for (auto* bi : uf_region.region_inst->getChipBumpInsts()) {
-      if (bi->getChipBump() == bump) {
-        uf_bump.bump_inst = bi;
-        break;
-      }
+    auto it = bump_to_inst.find(bump);
+    if (it != bump_to_inst.end()) {
+      uf_bump.bump_inst = it->second;
     }
     // Get local position from bump definition
     dbInst* bump_inst = bump->getInst();
@@ -498,15 +514,6 @@ UnfoldedChip* UnfoldedModel::findUnfoldedChip(
 {
   std::string key;
   char delimiter = '/';
-  if (!path.empty()) {
-    dbBlock* block = path[0]->getParentChip()->getBlock();
-    if (block) {
-      char d = block->getHierarchyDelimiter();
-      if (d != 0) {
-        delimiter = d;
-      }
-    }
-  }
 
   for (size_t i = 0; i < path.size(); i++) {
     key += path[i]->getName();
@@ -526,13 +533,12 @@ UnfoldedRegionFull* UnfoldedModel::findUnfoldedRegion(
     UnfoldedChip* chip,
     dbChipRegionInst* region_inst)
 {
-  if (!chip) {
+  if (!chip || !region_inst) {
     return nullptr;
   }
-  for (auto& region : chip->regions) {
-    if (region.region_inst == region_inst) {
-      return &region;
-    }
+  auto it = chip->region_map.find(region_inst);
+  if (it != chip->region_map.end()) {
+    return it->second;
   }
   return nullptr;
 }
@@ -609,25 +615,9 @@ void UnfoldedModel::unfoldNets(dbChip* chip)
       std::vector<dbChipInst*> path;
       dbChipBumpInst* bump_inst = net->getBumpInst(i, path);
 
-      // Resolve path to UnfoldedChip
-      UnfoldedChip* uf_chip = findUnfoldedChip(path);
-      if (!uf_chip) {
-        continue;
-      }
-
-      // Find UnfoldedRegion that contains this bump inst
-      UnfoldedRegionFull* uf_region
-          = findUnfoldedRegion(uf_chip, bump_inst->getChipRegionInst());
-      if (!uf_region) {
-        continue;
-      }
-
-      // Find UnfoldedBump
-      for (auto& bump : uf_region->bumps) {
-        if (bump.bump_inst == bump_inst) {
-          uf_net.connected_bumps.push_back(&bump);
-          break;
-        }
+      auto it = bump_inst_map_.find(bump_inst);
+      if (it != bump_inst_map_.end()) {
+        uf_net.connected_bumps.push_back(it->second);
       }
     }
     unfolded_nets_.push_back(uf_net);
