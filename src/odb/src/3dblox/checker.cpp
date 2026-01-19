@@ -120,6 +120,10 @@ void Checker::checkConnectivity(odb::dbChip* chip,
   for (auto chip_inst : chip->getChipInsts()) {
     odb::dbChip* master_prop = chip_inst->getMasterChip();
 
+    if (!master_prop) {
+      continue;
+    }
+
     // We want the ChipletDef (master)
     if (processed_chips.contains(master_prop)) {
       continue;
@@ -160,6 +164,9 @@ void Checker::checkConnectivity(odb::dbChip* chip,
 
     while (lib_iter->hasNext()) {
       sta::Library* lib = lib_iter->next();
+      if (!lib) {  // paranoia check
+        continue;
+      }
       top_cell = network->findCell(lib, design_name.c_str());
       if (top_cell) {
         break;
@@ -334,6 +341,10 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
         break;
       }
       auto cuboid_j = chips[idx_j].cuboid;
+      if (chips[idx_i].isParentOf(&chips[idx_j])
+          || chips[idx_j].isParentOf(&chips[idx_i])) {
+        continue;
+      }
       if (cuboid_i.overlaps(cuboid_j)) {
         auto intersection = cuboid_i.intersect(cuboid_j);
         if (!isOverlapFullyInConnections(
@@ -615,6 +626,9 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
                                           const UnfoldedChip* chip2,
                                           const Cuboid& overlap) const
 {
+  if (chip1->isParentOf(chip2) || chip2->isParentOf(chip1)) {
+    return true;
+  }
   for (const auto& conn : model.getConnections()) {
     if (!conn.isValid()) {
       continue;

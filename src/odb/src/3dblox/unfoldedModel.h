@@ -83,6 +83,7 @@ struct UnfoldedChip
 {
   std::string getName() const;
   std::string getPathKey() const;
+  bool isParentOf(const UnfoldedChip* other) const;
 
   std::vector<dbChipInst*> chip_inst_path;  // non-owning, managed by dbChip
   Cuboid cuboid;
