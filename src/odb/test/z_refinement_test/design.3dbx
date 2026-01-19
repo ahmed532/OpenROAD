@@ -1,0 +1,24 @@
+Header:
+  version: 2.0
+  include: [host.3dbx, chiplets.3dbv]
+Design:
+  name: TopDesign
+ChipletInst:
+  Host_Inst:
+    reference: Host
+  ChipC_Inst:
+    reference: ChipC
+Stack:
+  Host_Inst:
+    loc: [0, 0]
+    z: 100000
+    orient: R0
+    root: true
+  ChipC_Inst:
+    loc: [150, 150]
+    z: 100130 # Match the Guest_Inst's local Z (100) + Host loc Z (100000) + Guest thick (30) = 100130
+    orient: R0
+Connection:
+  Conn_from_Below:
+    top: ChipC_Inst.regions.TopSurface
+    bot: Host_Inst.regions.InternalReg

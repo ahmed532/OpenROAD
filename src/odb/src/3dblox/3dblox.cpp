@@ -50,6 +50,8 @@ ThreeDBlox::ThreeDBlox(utl::Logger* logger, odb::dbDatabase* db, sta::Sta* sta)
 
 void ThreeDBlox::readDbv(const std::string& dbv_file)
 {
+  std::string full_path = std::filesystem::absolute(dbv_file).string();
+  read_files_.insert(full_path);
   DbvParser parser(logger_);
   DbvData data = parser.parseFile(dbv_file);
   if (db_->getDbuPerMicron() == 0) {
@@ -78,6 +80,8 @@ void ThreeDBlox::readDbv(const std::string& dbv_file)
 
 void ThreeDBlox::readDbx(const std::string& dbx_file)
 {
+  std::string full_path = std::filesystem::absolute(dbx_file).string();
+  read_files_.insert(full_path);
   DbxParser parser(logger_);
   DbxData data = parser.parseFile(dbx_file);
   readHeaderIncludes(data.header.includes);
@@ -193,6 +197,10 @@ void ThreeDBlox::calculateSize(dbChip* chip)
 {
   Cuboid cuboid;
   cuboid.mergeInit();
+  if (chip->getWidth() > 0 && chip->getHeight() > 0) {
+    cuboid.merge(Cuboid(
+        0, 0, 0, chip->getWidth(), chip->getHeight(), chip->getThickness()));
+  }
   for (auto inst : chip->getChipInsts()) {
     cuboid.merge(inst->getCuboid());
   }
@@ -204,6 +212,19 @@ void ThreeDBlox::calculateSize(dbChip* chip)
 void ThreeDBlox::readHeaderIncludes(const std::vector<std::string>& includes)
 {
   for (const auto& include : includes) {
+    // Resolve full path to check against read_files_
+    // Note: This logic assumes 'include' is relative to CWD or is absolute.
+    // If recursively parsed files have includes relative to themselves,
+    // the parser (DbxParser) handles finding them, but we might check the wrong
+    // string here if we don't know the base path.
+    // However, since we don't have base path info readily available without API
+    // change, we use absolute() as a best-effort de-duplication key.
+    std::string full_path = std::filesystem::absolute(include).string();
+    if (read_files_.find(full_path) != read_files_.end()) {
+      continue;
+    }
+    read_files_.insert(full_path);
+
     if (include.find(".3dbv") != std::string::npos) {
       readDbv(include);
     } else if (include.find(".3dbx") != std::string::npos) {
@@ -336,8 +357,7 @@ void ThreeDBlox::createChiplet(const ChipletDef& chiplet)
 
   chip->setOffset(Point(chiplet.offset.x * db_->getDbuPerMicron(),
                         chiplet.offset.y * db_->getDbuPerMicron()));
-  if (chip->getChipType() != dbChip::ChipType::HIER
-      && chip->getBlock() == nullptr) {
+  if (chip->getBlock() == nullptr) {
     // blackbox stage, create block
     auto block = odb::dbBlock::create(chip, chiplet.name.c_str());
     const int x_min = chip->getScribeLineWest() + chip->getSealRingWest();
@@ -468,11 +488,15 @@ void ThreeDBlox::createBump(const BumpMapEntry& entry,
 
 dbChip* ThreeDBlox::createDesignTopChiplet(const DesignDef& design)
 {
-  dbChip* chip
-      = dbChip::create(db_, nullptr, design.name, dbChip::ChipType::HIER);
+  dbChip* chip = db_->findChip(design.name.c_str());
+  if (chip == nullptr) {
+    chip = dbChip::create(db_, nullptr, design.name, dbChip::ChipType::HIER);
+  }
   if (!design.external.verilog_file.empty()) {
-    odb::dbStringProperty::create(
-        chip, "verilog_file", design.external.verilog_file.c_str());
+    if (odb::dbProperty::find(chip, "verilog_file") == nullptr) {
+      odb::dbStringProperty::create(
+          chip, "verilog_file", design.external.verilog_file.c_str());
+    }
   }
   db_->setTopChip(chip);
   return chip;

@@ -1,0 +1,5 @@
+[INFO ODB-0227] LEF file: z_refinement_test/tech.lef, created 3 layers
+[WARNING ODB-0156] Found 1 overlapping chips
+[WARNING ODB-0207] Invalid connection Conn_from_Below: ChipC_Inst/TopSurface (faces FRONT) to Host_Inst/InternalReg (faces INTERNAL)
+[WARNING ODB-0206] Found 1 non-intersecting connections
+PASS: 3DBlox Connectivity Check Passed (No false positives due to Z-hack)

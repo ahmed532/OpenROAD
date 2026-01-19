@@ -123,6 +123,38 @@ static void applyTransform3D(odb::Cuboid& cuboid, odb::dbChipInst* inst)
   cuboid.set_zhi(zhi + z_offset);
 }
 
+// Returns {total_thickness, layer_z}
+// layer_z is the z-coordinate of the TOP of the given layer relative to the
+// bottom of the stack.
+std::pair<int, int> getLayerZ(odb::dbTech* tech, odb::dbTechLayer* target_layer)
+{
+  int total_thickness = 0;
+  int layer_z = 0;
+  bool reached_target = false;
+
+  if (!tech) {
+    return {0, 0};
+  }
+
+  for (auto* layer : tech->getLayers()) {
+    auto type = layer->getType();
+    if (type == odb::dbTechLayerType::ROUTING
+        || type == odb::dbTechLayerType::CUT) {
+      uint32_t thick = 0;
+      if (layer->getThickness(thick)) {
+        total_thickness += thick;
+        if (!reached_target) {
+          layer_z += thick;
+        }
+      }
+    }
+    if (layer == target_layer) {
+      reached_target = true;
+    }
+  }
+  return {total_thickness, layer_z};
+}
+
 }  // namespace
 
 namespace odb {
@@ -188,12 +220,18 @@ bool UnfoldedConnection::isValid() const
   bool top_faces_up = top_region->isFacingUp();
   bool bot_faces_down = bottom_region->isFacingDown();
 
+  bool top_is_internal = top_region->isInternal();
+  bool bot_is_internal = bottom_region->isInternal();
+
   // Valid Pair 1: Standard (Top chip looking down, Bottom chip looking up)
-  bool standard_pair = top_faces_down && bot_faces_up;
+  // OR one is INTERNAL (assumed to be connectable from both sides or embedded)
+  bool standard_pair = (top_faces_down || top_is_internal)
+                       && (bot_faces_up || bot_is_internal);
 
   // Valid Pair 2: Inverted/Interposer (Top chip looking up, Bottom chip looking
   // down)
-  bool inverted_pair = top_faces_up && bot_faces_down;
+  bool inverted_pair = (top_faces_up || top_is_internal)
+                       && (bot_faces_down || bot_is_internal);
 
   if (!standard_pair && !inverted_pair) {
     return false;
@@ -372,24 +410,23 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
     unfolded_chip.cuboid = chip_inst->getMasterChip()->getCuboid();
   }
 
-  // local_cuboid for parent is this chip's master-coord cuboid transformed by
-  // this instance's transform.
+  // local_cuboid for parent is this chip's master-coord cuboid transformed
+  // by this instance's transform.
   local_cuboid = unfolded_chip.cuboid;
   chip_inst->getTransform().apply(local_cuboid);
 
   // GLOBAL cuboid for the UnfoldedChip object
-  // It starts as the master cuboid (leaf) or merged sub-master cuboid (HIER).
-  // We apply the instance transforms of ALL elements in the path from leaf to
-  // root.
+  // It starts as the master cuboid (leaf) or merged sub-master cuboid
+  // (HIER). We apply the instance transforms of ALL elements in the path
+  // from leaf to root.
   for (auto inst : path | std::views::reverse) {
     applyTransform3D(unfolded_chip.cuboid, inst);
   }
 
   // Unfold regions
   auto chip_type = chip_inst->getMasterChip()->getChipType();
-  bool is_simple_type
-      = (chip_type == dbChip::ChipType::DIE || chip_type == dbChip::ChipType::IP
-         || chip_type == dbChip::ChipType::HIER);
+  bool is_simple_type = (chip_type == dbChip::ChipType::DIE
+                         || chip_type == dbChip::ChipType::IP);
 
   for (auto region_inst : chip_inst->getRegions()) {
     UnfoldedRegionFull uf_region;
@@ -405,7 +442,8 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
     auto original_side = region_inst->getChipRegion()->getSide();
     uf_region.effective_side = computeEffectiveSide(original_side, path);
 
-    // Set Z surface using transformed surface point to handle all orientations
+    // Set Z surface using transformed surface point to handle all
+    // orientations
     int master_thick = chip_inst->getMasterChip()->getThickness();
     int local_z = 0;
     if (original_side == dbChipRegion::Side::FRONT) {
@@ -413,7 +451,40 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
     } else if (original_side == dbChipRegion::Side::BACK) {
       local_z = 0;
     } else {
-      local_z = master_thick / 2;  // Approximate for internal
+      // Calculate specific Z for internal / internal_ext layers
+      auto* region = region_inst->getChipRegion();
+      auto* layer = region->getLayer();
+
+      bool z_set = false;
+      if (layer) {
+        auto* tech = chip_inst->getMasterChip()->getTech();
+        if (tech) {
+          auto [total_thick, layer_z] = getLayerZ(tech, layer);
+          // Assuming BEOL is at the "FRONT" (top) of the chip
+          // layer_z is distance from bottom of BEOL stack to top of layer
+          // total_thick is height of BEOL stack.
+          // So layer is (total_thick - layer_z) from the TOP of BEOL.
+          // If BEOL is on top of substrate (master_thick), then:
+          // top of layer Z = master_thick - (total_thick - layer_z)
+
+          if (total_thick > 0) {
+            int dist_from_top = total_thick - layer_z;
+            local_z = master_thick - dist_from_top;
+            // Clamp within chip body
+            if (local_z < 0) {
+              local_z = 0;
+            }
+            if (local_z > master_thick) {
+              local_z = master_thick;
+            }
+            z_set = true;
+          }
+        }
+      }
+
+      if (!z_set) {
+        local_z = master_thick / 2;  // Approximate for internal
+      }
     }
 
     Point3D surface_pt(0, 0, local_z);

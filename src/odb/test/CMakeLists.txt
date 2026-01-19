@@ -22,6 +22,7 @@ or_integration_tests(
     check_3dblox_connectivity_recursive_mirror
     check_3dblox_connectivity_recursive_cross
     check_3dblox_connectivity_recursive_z
+    check_3dblox_connectivity_z_refinement
     check_3dblox_null_region
     check_routing_tracks
     create_blockage

@@ -634,10 +634,23 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
       // If one of the regions is INTERNAL_EXT, it authorizes the overlap
       // of its parent chip with the other chip, but only within the region's
       // footprint.
-      if (r1->isInternalExt() && r1->cuboid.contains(overlap)) {
+      Rect r1_rect(r1->cuboid.xMin(),
+                   r1->cuboid.yMin(),
+                   r1->cuboid.xMax(),
+                   r1->cuboid.yMax());
+      Rect r2_rect(r2->cuboid.xMin(),
+                   r2->cuboid.yMin(),
+                   r2->cuboid.xMax(),
+                   r2->cuboid.yMax());
+      Rect overlap_rect(
+          overlap.xMin(), overlap.yMin(), overlap.xMax(), overlap.yMax());
+
+      if ((r1->isInternalExt() || r1->isInternal())
+          && r1_rect.contains(overlap_rect)) {
         return true;
       }
-      if (r2->isInternalExt() && r2->cuboid.contains(overlap)) {
+      if ((r2->isInternalExt() || r2->isInternal())
+          && r2_rect.contains(overlap_rect)) {
         return true;
       }
     }
