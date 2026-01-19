@@ -1,0 +1,32 @@
+
+Header:
+  version: "1.0"
+  unit: "micron"
+  precision: 2000
+  include:
+    - mid.3dbx
+
+Design:
+  name: "TopDesign"
+
+ChipletInst:
+  mid_inst1:
+    reference: MidChip
+  leaf_inst_top:
+    reference: LeafChip
+
+Stack:
+  mid_inst1:
+    loc: [2000.0, 2000.0]
+    z: 300.0
+    orient: R0
+  leaf_inst_top:
+    loc: [1000.0, 1000.0]
+    z: 0.0
+    orient: R0
+
+Connection:
+  recur_conn:
+    top: mid_inst1/leaf_inst.regions.back_reg
+    bot: leaf_inst_top.regions.front_reg
+    thickness: 0.0

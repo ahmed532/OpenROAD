@@ -1,0 +1,27 @@
+Header:
+  version: 3
+  unit: micron
+  precision: 2000
+  include:
+    - hard_2_interposer.3dbx
+Design:
+  name: TopDesign
+ChipletInst:
+  interposer_inst:
+    reference: Interposer
+  target_inst:
+    reference: SoC
+Stack:
+  interposer_inst:
+    loc: [2000, 1500]
+    z: 100.0
+    orient: R90
+  target_inst:
+    loc: [500, 2500]
+    z: 400.0
+    orient: MZ
+Connection:
+  hier_rot_conn:
+    top: interposer_inst/chip_inst.regions.front_reg
+    bot: target_inst.regions.front_reg
+    thickness: 0.0

@@ -1,0 +1,44 @@
+source "helpers.tcl"
+
+# Load design
+read_3dbx "data/example.3dbx"
+set db [ord::get_db]
+set top_chip [$db getChip]
+
+# Get instances
+set inst1 [$top_chip findChipInst "soc_inst"]
+set inst2 [$top_chip findChipInst "soc_inst_duplicate"]
+
+# Initially they overlap (stacked)
+check_3dblox
+set chip [[ord::get_db] getChip]
+set categories [$chip getMarkerCategories]
+puts "TOTAL CATEGORIES: [llength $categories]"
+set total_markers 0
+foreach cat $categories {
+  set count [$cat getMarkerCount]
+  set total_markers [expr { $total_markers + $count }]
+  if { $count > 0 } {
+    puts "CATEGORY: [$cat getName] has $count markers"
+  }
+}
+puts "TOTAL MARKERS: $total_markers"
+check "Initial connection ok" { get_3dblox_marker_count "Connected regions" } 0
+
+# Move inst2 far away so regions don't overlap
+lassign [$inst1 getLoc] x1 y1 z1
+set master1 [$inst1 getMasterChip]
+set w1 [$master1 getWidth]
+set h1 [$master1 getHeight]
+set t1 [$master1 getThickness]
+
+# Move inst2 far away (at least 2x width/height away)
+set p [odb::Point3D]
+$p set [expr $x1 + 2 * $w1] [expr $y1 + 2 * $h1] [expr $z1 + $t1]
+$inst2 setLoc $p
+
+# Now check
+check_3dblox
+check "Connection mismatch detected" { get_3dblox_marker_count "Connected regions" } 1
+
+exit_summary

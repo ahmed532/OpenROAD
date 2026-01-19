@@ -6,6 +6,24 @@ or_integration_tests(
     all_pins_placed2
     bterm_hier_create
     check_3dblox
+    check_3dblox_connectivity_gap
+    check_3dblox_connectivity_hier_rotation
+    check_3dblox_connectivity_mirror_mz
+    check_3dblox_connectivity_nested_rotation
+    check_3dblox_connectivity_basic_overlapping
+    check_3dblox_connectivity_hier_recursive
+    check_3dblox_connectivity_basic_stacked
+    check_3dblox_connectivity_z_axis
+    check_3dblox_connectivity_hier
+    check_3dblox_connectivity_rotation
+    check_3dblox_connectivity_deep
+    check_3dblox_connectivity_subchip
+    check_3dblox_connectivity_recursive_nested
+    check_3dblox_connectivity_recursive_mirror
+    check_3dblox_connectivity_recursive_cross
+    check_3dblox_connectivity_recursive_z
+    check_3dblox_connectivity_z_refinement
+    check_3dblox_null_region
     check_routing_tracks
     create_blockage
     create_obstruction

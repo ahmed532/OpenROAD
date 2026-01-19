@@ -1,0 +1,10 @@
+[INFO ODB-0227] LEF file: data/recursive/../../Nangate45/Nangate45_tech.lef, created 22 layers, 27 vias
+[INFO ODB-0227] LEF file: data/recursive/../../Nangate45/fake_macros.lef, created 10 library cells
+[WARNING ODB-0206] Region back_reg has no layer specified.
+[WARNING ODB-0206] Region front_reg has no layer specified.
+[WARNING ODB-0151] Found 1 floating chip sets
+[WARNING ODB-0207] Invalid connection hard_conn1: mid_inst/leaf_inst/back_reg (faces BACK) to leaf_inst_top/front_reg (faces FRONT)
+[WARNING ODB-0273] Found 1 non-intersecting connections
+Hard Nested move errors: 1
+Summary 2 / 2 (100% pass)
+pass
