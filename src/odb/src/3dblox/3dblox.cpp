@@ -95,10 +95,10 @@ void ThreeDBlox::readDbx(const std::string& dbx_file)
   calculateSize(chip);
 }
 
-void ThreeDBlox::check()
+void ThreeDBlox::check(int bump_pitch_tolerance)
 {
   Checker checker(logger_);
-  checker.check(db_->getChip());
+  checker.check(db_->getChip(), bump_pitch_tolerance);
 }
 
 namespace {
@@ -220,7 +220,7 @@ void ThreeDBlox::readHeaderIncludes(const std::vector<std::string>& includes)
     // However, since we don't have base path info readily available without API
     // change, we use absolute() as a best-effort de-duplication key.
     std::string full_path = std::filesystem::absolute(include).string();
-    if (read_files_.find(full_path) != read_files_.end()) {
+    if (read_files_.contains(full_path)) {
       continue;
     }
     read_files_.insert(full_path);
@@ -723,7 +723,8 @@ void ThreeDBlox::readBMap(const std::string& bmap_file)
         top_shape_ptr = &(*top_shapes.begin());
       }
 
-      bpininfo.emplace(master, BPinInfo{max_layer, *top_shape_ptr});
+      bpininfo.emplace(master,
+                       BPinInfo{.layer = max_layer, .rect = *top_shape_ptr});
     }
   }
 
