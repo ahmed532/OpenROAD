@@ -422,7 +422,6 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
         = computeEffectiveSide(region_inst->getChipRegion()->getSide(), path);
 
     uf_region.cuboid = region_inst->getChipRegion()->getCuboid();
-
     total_transform.apply(uf_region.cuboid);
 
     unfoldBumps(uf_region, total_transform);
