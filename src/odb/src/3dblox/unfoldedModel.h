@@ -39,14 +39,20 @@ struct UnfoldedRegion
   dbChipRegion::Side effective_side = dbChipRegion::Side::FRONT;
   Cuboid cuboid;
   UnfoldedChip* parent_chip = nullptr;
-  std::deque<UnfoldedBump> bumps;
+  std::deque<UnfoldedBump> bumps{};
   bool isUsed = false;
 
   int getSurfaceZ() const;
-  bool isFacingUp() const;
-  bool isFacingDown() const;
-  bool isInternal() const;
-  bool isInternalExt() const;
+  bool isFront() const { return effective_side == dbChipRegion::Side::FRONT; }
+  bool isBack() const { return effective_side == dbChipRegion::Side::BACK; }
+  bool isInternal() const
+  {
+    return effective_side == dbChipRegion::Side::INTERNAL;
+  }
+  bool isInternalExt() const
+  {
+    return effective_side == dbChipRegion::Side::INTERNAL_EXT;
+  }
 };
 
 struct UnfoldedConnection
@@ -54,7 +60,6 @@ struct UnfoldedConnection
   dbChipConn* connection = nullptr;
   UnfoldedRegion* top_region = nullptr;
   UnfoldedRegion* bottom_region = nullptr;
-  Cuboid connection_cuboid;
   bool is_bterm_connection = false;
   dbBTerm* bterm = nullptr;
 
@@ -64,7 +69,7 @@ struct UnfoldedConnection
 struct UnfoldedNet
 {
   dbChipNet* chip_net = nullptr;
-  std::vector<UnfoldedBump*> connected_bumps;
+  std::vector<UnfoldedBump*> connected_bumps{};
 
   std::vector<UnfoldedBump*> getDisconnectedBumps(
       utl::Logger* logger,
@@ -78,13 +83,13 @@ struct UnfoldedChip
   bool isParentOf(const UnfoldedChip* other) const;
 
   std::vector<dbChipInst*> chip_inst_path;
-  Cuboid cuboid;
-  dbTransform transform;
+  Cuboid cuboid{};
+  dbTransform transform{};
 
   bool z_flipped = false;
-  std::deque<UnfoldedRegion> regions;
+  std::deque<UnfoldedRegion> regions{};
 
-  std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map;
+  std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map{};
 };
 
 class UnfoldedModel
@@ -92,9 +97,6 @@ class UnfoldedModel
  public:
   UnfoldedModel(utl::Logger* logger, dbChip* chip);
 
-  // Accessors return const references to internal containers.
-  // The containers use std::deque to ensure pointer stability when elements
-  // are added, allowing other structures to hold raw pointers to elements.
   const std::deque<UnfoldedChip>& getChips() const { return unfolded_chips_; }
   const std::deque<UnfoldedConnection>& getConnections() const
   {
@@ -107,20 +109,15 @@ class UnfoldedModel
                                   std::vector<dbChipInst*>& path,
                                   Cuboid& local_cuboid);
   void unfoldBumps(UnfoldedRegion& uf_region, const dbTransform& transform);
-  void unfoldConnections(dbChip* chip);
   void unfoldConnectionsRecursive(dbChip* chip,
                                   const std::vector<dbChipInst*>& parent_path);
-  void unfoldNets(dbChip* chip);
+  void unfoldNetsRecursive(dbChip* chip);
 
   UnfoldedChip* findUnfoldedChip(const std::vector<dbChipInst*>& path);
   UnfoldedRegion* findUnfoldedRegion(UnfoldedChip* chip,
                                      dbChipRegionInst* region_inst);
 
   utl::Logger* logger_;
-
-  // Using std::deque for pointer stability: elements maintain their addresses
-  // even when the container grows, which is critical since UnfoldedRegion,
-  // UnfoldedBump, etc. hold raw pointers to their parent structures.
   std::deque<UnfoldedChip> unfolded_chips_;
   std::deque<UnfoldedConnection> unfolded_connections_;
   std::deque<UnfoldedNet> unfolded_nets_;
