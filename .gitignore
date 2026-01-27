@@ -63,3 +63,5 @@ projectview.bazelproject
 .bsp/
 .bazelbsp/
 /buildifier
+src/odb/test/3dblox_designs/
+check_drc

@@ -343,7 +343,7 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
       bump_inst_map_[bump.bump_inst] = &bump;
     }
   }
-  chip_path_map_[ptr->getName()] = ptr;
+  chip_path_map_[ptr->chip_inst_path] = ptr;
   path.pop_back();
   return ptr;
 }
@@ -357,24 +357,14 @@ void UnfoldedModel::unfoldBumps(UnfoldedRegion& uf_region, const dbTransform& tr
     Point global_xy = bump->getInst()->getLocation();
     transform.apply(global_xy);
 
-    UnfoldedBump uf_bump{bump_inst, &uf_region, 
-                         Point3D(global_xy.x(), global_xy.y(), uf_region.getSurfaceZ())};
-
-    if (auto prop = dbProperty::find(bump, "logical_net"))
-      uf_bump.logical_net_name = ((dbStringProperty*) prop)->getValue();
-    
-    if (auto prop = dbProperty::find(bump, "logical_port"))
-      uf_bump.port_name = ((dbStringProperty*) prop)->getValue();
-    else
-      uf_bump.port_name = bump_inst->getName();
-
-    uf_region.bumps.push_back(uf_bump);
+    uf_region.bumps.push_back({bump_inst, &uf_region, 
+                                Point3D(global_xy.x(), global_xy.y(), uf_region.getSurfaceZ())});
   }
 }
 
 UnfoldedChip* UnfoldedModel::findUnfoldedChip(const std::vector<dbChipInst*>& path)
 {
-  auto it = chip_path_map_.find(getChipPathKey(path));
+  auto it = chip_path_map_.find(path);
   return it != chip_path_map_.end() ? it->second : nullptr;
 }
 
@@ -390,17 +380,20 @@ void UnfoldedModel::unfoldConnections(dbChip* chip) { unfoldConnectionsRecursive
 void UnfoldedModel::unfoldConnectionsRecursive(dbChip* chip, const std::vector<dbChipInst*>& parent_path)
 {
   for (auto* conn : chip->getChipConns()) {
-    auto top_path = parent_path;
-    for (auto* inst : conn->getTopRegionPath()) top_path.push_back(inst);
-    auto bot_path = parent_path;
-    for (auto* inst : conn->getBottomRegionPath()) bot_path.push_back(inst);
+    auto build_full_path = [&](const std::vector<dbChipInst*>& rel_path) {
+      auto full = parent_path;
+      full.insert(full.end(), rel_path.begin(), rel_path.end());
+      return full;
+    };
 
-    UnfoldedRegion* top = findUnfoldedRegion(findUnfoldedChip(top_path), conn->getTopRegion());
-    UnfoldedRegion* bot = findUnfoldedRegion(findUnfoldedChip(bot_path), conn->getBottomRegion());
+    UnfoldedRegion* top = findUnfoldedRegion(findUnfoldedChip(build_full_path(conn->getTopRegionPath())), 
+                                             conn->getTopRegion());
+    UnfoldedRegion* bot = findUnfoldedRegion(findUnfoldedChip(build_full_path(conn->getBottomRegionPath())), 
+                                             conn->getBottomRegion());
 
     if (!top && !bot) continue;
 
-    UnfoldedConnection uf_conn{conn, top, bot};
+    UnfoldedConnection uf_conn{.connection = conn, .top_region = top, .bottom_region = bot};
     if (top && bot) uf_conn.connection_cuboid = computeConnectionCuboid(*top, *bot);
     if (top && top->isInternalExt()) top->isUsed = true;
     if (bot && bot->isInternalExt()) bot->isUsed = true;
@@ -417,7 +410,7 @@ void UnfoldedModel::unfoldConnectionsRecursive(dbChip* chip, const std::vector<d
 void UnfoldedModel::unfoldNets(dbChip* chip)
 {
   for (auto* net : chip->getChipNets()) {
-    UnfoldedNet uf_net{net};
+    UnfoldedNet uf_net{.chip_net = net};
     for (uint32_t i = 0; i < net->getNumBumpInsts(); i++) {
       std::vector<dbChipInst*> path;
       auto it = bump_inst_map_.find(net->getBumpInst(i, path));

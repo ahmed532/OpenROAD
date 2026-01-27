@@ -28,20 +28,17 @@ struct UnfoldedRegion;
 
 struct UnfoldedBump
 {
-  dbChipBumpInst* bump_inst;      // non-owning, managed by dbChip
-  UnfoldedRegion* parent_region;  // non-owning, points to UnfoldedChip::regions
+  dbChipBumpInst* bump_inst = nullptr;
+  UnfoldedRegion* parent_region = nullptr;
   Point3D global_position;
-  std::string logical_net_name;
-  std::string port_name;
 };
 
 struct UnfoldedRegion
 {
-  dbChipRegionInst* region_inst;  // non-owning, managed by dbChip
-  dbChipRegion::Side effective_side;
+  dbChipRegionInst* region_inst = nullptr;
+  dbChipRegion::Side effective_side = dbChipRegion::Side::FRONT;
   Cuboid cuboid;
-  UnfoldedChip* parent_chip
-      = nullptr;  // non-owning, points to UnfoldedModel::unfolded_chips_
+  UnfoldedChip* parent_chip = nullptr;
   std::deque<UnfoldedBump> bumps;
   bool isUsed = false;
 
@@ -54,23 +51,20 @@ struct UnfoldedRegion
 
 struct UnfoldedConnection
 {
-  dbChipConn* connection;  // non-owning, managed by dbChip
-  UnfoldedRegion*
-      top_region;  // non-owning, may be null for virtual connections
-  UnfoldedRegion*
-      bottom_region;  // non-owning, may be null for virtual connections
+  dbChipConn* connection = nullptr;
+  UnfoldedRegion* top_region = nullptr;
+  UnfoldedRegion* bottom_region = nullptr;
   Cuboid connection_cuboid;
   bool is_bterm_connection = false;
-  dbBTerm* bterm = nullptr;  // non-owning, managed by dbBlock
+  dbBTerm* bterm = nullptr;
 
   bool isValid() const;
 };
 
 struct UnfoldedNet
 {
-  dbChipNet* chip_net;  // non-owning, managed by dbChip
-  std::vector<UnfoldedBump*>
-      connected_bumps;  // non-owning, points to UnfoldedRegion::bumps
+  dbChipNet* chip_net = nullptr;
+  std::vector<UnfoldedBump*> connected_bumps;
 
   std::vector<UnfoldedBump*> getDisconnectedBumps(
       utl::Logger* logger,
@@ -83,12 +77,12 @@ struct UnfoldedChip
   std::string getName() const;
   bool isParentOf(const UnfoldedChip* other) const;
 
-  std::vector<dbChipInst*> chip_inst_path;  // non-owning, managed by dbChip
+  std::vector<dbChipInst*> chip_inst_path;
   Cuboid cuboid;
   dbTransform transform;
 
   bool z_flipped = false;
-  std::deque<UnfoldedRegion> regions;  // owning container
+  std::deque<UnfoldedRegion> regions;
 
   std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map;
 };
@@ -130,7 +124,7 @@ class UnfoldedModel
   std::deque<UnfoldedChip> unfolded_chips_;
   std::deque<UnfoldedConnection> unfolded_connections_;
   std::deque<UnfoldedNet> unfolded_nets_;
-  std::map<std::string, UnfoldedChip*> chip_path_map_;
+  std::map<std::vector<dbChipInst*>, UnfoldedChip*> chip_path_map_;
   std::unordered_map<dbChipBumpInst*, UnfoldedBump*> bump_inst_map_;
 };
 
