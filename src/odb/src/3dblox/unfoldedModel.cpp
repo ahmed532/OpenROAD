@@ -93,6 +93,63 @@ odb::dbTransform getTransform(odb::dbChipInst* inst)
       odb::Point3D(inst->getLoc().x(), inst->getLoc().y(), z_offset));
 }
 
+odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region)
+{
+  odb::dbTechLayer* layer = region->getLayer();
+  odb::dbChip* chip = region->getChip();
+  odb::dbTech* tech = chip->getTech();
+
+  if (!tech) {
+    auto tech_prop = odb::dbStringProperty::find(chip, "3dblox_tech");
+    if (tech_prop) {
+      tech = chip->getDb()->findTech(tech_prop->getValue().c_str());
+    }
+  }
+
+  if (!layer) {
+    auto layer_prop = odb::dbStringProperty::find(region, "3dblox_layer");
+    if (layer_prop && tech) {
+      layer = tech->findLayer(layer_prop->getValue().c_str());
+    }
+  }
+
+  if (!layer || !tech) {
+    return region->getCuboid();
+  }
+
+  uint32_t total_thick = 0, layer_z = 0, target_thick = 0;
+  bool reached = false;
+  for (odb::dbTechLayer* l : tech->getLayers()) {
+    uint32_t t = 0;
+    if (l->getType() == odb::dbTechLayerType::ROUTING
+        || l->getType() == odb::dbTechLayerType::CUT) {
+      if (l->getThickness(t)) {
+        total_thick += t;
+        if (!reached) {
+          layer_z += t;
+        }
+      }
+    }
+    if (l == layer) {
+      reached = true;
+      layer->getThickness(target_thick);
+    }
+  }
+
+  int z_top, z_bot, chip_thick = chip->getThickness();
+  auto side = region->getSide();
+  if (side == odb::dbChipRegion::Side::BACK) {
+    z_top = layer_z;
+    z_bot = layer_z - target_thick;
+  } else {
+    z_top = std::max(0, chip_thick - (int) (total_thick - layer_z));
+    z_bot = z_top - target_thick;
+  }
+  odb::Rect box = region->getBox();
+  return odb::Cuboid(
+      box.xMin(), box.yMin(), z_bot, box.xMax(), box.yMax(), z_top);
+}
+
 }  // namespace
 
 namespace odb {
@@ -421,7 +478,7 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
     uf_region.effective_side
         = computeEffectiveSide(region_inst->getChipRegion()->getSide(), path);
 
-    uf_region.cuboid = region_inst->getChipRegion()->getCuboid();
+    uf_region.cuboid = getCorrectedCuboid(region_inst->getChipRegion());
 
     total_transform.apply(uf_region.cuboid);
 
@@ -448,49 +505,32 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
 void UnfoldedModel::unfoldBumps(UnfoldedRegion& uf_region,
                                 const dbTransform& transform)
 {
-  dbChipRegion* region = uf_region.region_inst->getChipRegion();
-
-  auto bumps = region->getChipBumps();
-
-  // Pre-map bump instances to their definitions for O(1) lookup
-  std::unordered_map<dbChipBump*, dbChipBumpInst*> bump_to_inst;
-  for (auto* bi : uf_region.region_inst->getChipBumpInsts()) {
-    bump_to_inst[bi->getChipBump()] = bi;
-  }
-
-  for (auto* bump : bumps) {
+  for (auto* bump_inst : uf_region.region_inst->getChipBumpInsts()) {
+    dbChipBump* bump = bump_inst->getChipBump();
     UnfoldedBump uf_bump;
-    uf_bump.bump_inst = nullptr;
-    auto it = bump_to_inst.find(bump);
-    if (it != bump_to_inst.end()) {
-      uf_bump.bump_inst = it->second;
-    }
-    // Get local position from bump definition
-    dbInst* bump_inst = bump->getInst();
-    if (!bump_inst) {
+    uf_bump.bump_inst = bump_inst;
+
+    dbInst* inst = bump->getInst();
+    if (!inst) {
       continue;
     }
-    Point local_xy = bump_inst->getLocation();
+    Point local_xy = inst->getLocation();
+    Point global_xy = local_xy;
+    transform.apply(global_xy);
 
-    Point global_xy_pt = local_xy;
-    transform.apply(global_xy_pt);
+    uf_bump.global_position
+        = Point3D(global_xy.x(), global_xy.y(), uf_region.getSurfaceZ());
 
-    Point3D global_pos(
-        global_xy_pt.x(), global_xy_pt.y(), uf_region.getSurfaceZ());
-    uf_bump.global_position = global_pos;
-
-    // Extract logical net name from property
     dbProperty* net_prop = dbProperty::find(bump, "logical_net");
     if (net_prop && net_prop->getType() == dbProperty::STRING_PROP) {
       uf_bump.logical_net_name = ((dbStringProperty*) net_prop)->getValue();
     }
 
-    // Resolve port name from property
     dbProperty* port_prop = dbProperty::find(bump, "logical_port");
     if (port_prop && port_prop->getType() == dbProperty::STRING_PROP) {
       uf_bump.port_name = ((dbStringProperty*) port_prop)->getValue();
-    } else if (uf_bump.bump_inst) {
-      uf_bump.port_name = uf_bump.bump_inst->getName();
+    } else {
+      uf_bump.port_name = bump_inst->getName();
     }
 
     uf_region.bumps.push_back(uf_bump);

@@ -5,7 +5,6 @@
 [INFO ODB-0128] Design: fake_macros
 [INFO ODB-0131]     Created 10 components and 32 component-terminals.
 [INFO ODB-0133]     Created 12 nets and 24 connections.
-[WARNING ODB-0206] Region front_reg has no layer specified.
 [INFO ODB-0552] Reading Verilog file soc.v for design SoC
 [WARNING ODB-0156] Found 1 overlapping chips
 [WARNING ODB-0207] Invalid connection soc_to_soc: soc_inst_duplicate/front_reg (faces BACK) to soc_inst/front_reg (faces FRONT)

@@ -314,6 +314,9 @@ void ThreeDBlox::createChiplet(const ChipletDef& chiplet)
     chip = dbChip::create(
         db_, tech, chiplet.name, getChipType(chiplet.type, logger_));
   }
+  if (tech != nullptr) {
+    odb::dbStringProperty::create(chip, "3dblox_tech", tech->getName().c_str());
+  }
   // Read DEF file
   if (!chiplet.external.def_file.empty()) {
     odb::defin def_reader(db_, logger_, odb::defin::DEFAULT);
@@ -357,7 +360,8 @@ void ThreeDBlox::createChiplet(const ChipletDef& chiplet)
 
   chip->setOffset(Point(chiplet.offset.x * db_->getDbuPerMicron(),
                         chiplet.offset.y * db_->getDbuPerMicron()));
-  if (chip->getBlock() == nullptr) {
+  if (chip->getChipType() != dbChip::ChipType::HIER
+      && chip->getBlock() == nullptr) {
     // blackbox stage, create block
     auto block = odb::dbBlock::create(chip, chiplet.name.c_str());
     const int x_min = chip->getScribeLineWest() + chip->getSealRingWest();
@@ -404,12 +408,14 @@ void ThreeDBlox::createRegion(const ChipletRegion& region, dbChip* chip)
                     "3DBV Parser: Layer {} not found in tech.",
                     region.layer);
     }
-  } else {
-    logger_->warn(
-        utl::ODB, 206, "Region {} has no layer specified.", region.name);
   }
+  dbTechLayer* layer_to_pass = (chip->getBlock() != nullptr) ? layer : nullptr;
   dbChipRegion* chip_region = dbChipRegion::create(
-      chip, region.name, getChipRegionSide(region.side, logger_), layer);
+      chip, region.name, getChipRegionSide(region.side, logger_), layer_to_pass);
+  if (layer != nullptr && layer_to_pass == nullptr) {
+    odb::dbStringProperty::create(
+        chip_region, "3dblox_layer", layer->getName().c_str());
+  }
   Rect box;
   box.mergeInit();
   for (const auto& coord : region.coords) {

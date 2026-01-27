@@ -5,7 +5,6 @@
 [INFO ODB-0128] Design: fake_macros
 [INFO ODB-0131]     Created 10 components and 32 component-terminals.
 [INFO ODB-0133]     Created 12 nets and 24 connections.
-[WARNING ODB-0206] Region front_reg has no layer specified.
 [INFO ODB-0552] Reading Verilog file soc.v for design SoC
 [INFO ODB-0552] Reading Verilog file soc.v for design SoC
 TOTAL CATEGORIES: 1
