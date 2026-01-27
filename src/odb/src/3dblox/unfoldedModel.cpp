@@ -24,15 +24,25 @@
 
 namespace {
 
+bool isPathZFlipped(const std::vector<odb::dbChipInst*>& path)
+{
+  bool flipped = false;
+  for (auto inst : path) {
+    if (inst->getOrient().isMirrorZ()) {
+      flipped = !flipped;
+    }
+  }
+  return flipped;
+}
+
 std::string getChipPathKey(const std::vector<odb::dbChipInst*>& path)
 {
   std::string key;
-  char delimiter = '/';
-  for (auto* chip_inst : path) {
+  for (auto* inst : path) {
     if (!key.empty()) {
-      key += delimiter;
+      key += '/';
     }
-    key += chip_inst->getName();
+    key += inst->getName();
   }
   return key;
 }
@@ -41,56 +51,39 @@ odb::dbChipRegion::Side computeEffectiveSide(
     odb::dbChipRegion::Side original,
     const std::vector<odb::dbChipInst*>& path)
 {
-  bool z_flipped = false;
-  for (auto inst : path) {
-    if (inst->getOrient().isMirrorZ()) {
-      z_flipped = !z_flipped;
-    }
-  }
-
-  if (!z_flipped) {
+  if (!isPathZFlipped(path)) {
     return original;
   }
-
-  switch (original) {
-    case odb::dbChipRegion::Side::FRONT:
-      return odb::dbChipRegion::Side::BACK;
-    case odb::dbChipRegion::Side::BACK:
-      return odb::dbChipRegion::Side::FRONT;
-    default:
-      return original;
+  if (original == odb::dbChipRegion::Side::FRONT) {
+    return odb::dbChipRegion::Side::BACK;
   }
+  if (original == odb::dbChipRegion::Side::BACK) {
+    return odb::dbChipRegion::Side::FRONT;
+  }
+  return original;
 }
 
 odb::Cuboid computeConnectionCuboid(const odb::UnfoldedRegion& top,
-                                    const odb::UnfoldedRegion& bottom,
-                                    int thickness)
+                                    const odb::UnfoldedRegion& bottom)
 {
   odb::Cuboid result;
   result.set_xlo(std::max(top.cuboid.xMin(), bottom.cuboid.xMin()));
   result.set_ylo(std::max(top.cuboid.yMin(), bottom.cuboid.yMin()));
   result.set_xhi(std::min(top.cuboid.xMax(), bottom.cuboid.xMax()));
   result.set_yhi(std::min(top.cuboid.yMax(), bottom.cuboid.yMax()));
-
-  int z_min = std::min(top.getSurfaceZ(), bottom.getSurfaceZ());
-  int z_max = std::max(top.getSurfaceZ(), bottom.getSurfaceZ());
-
-  result.set_zlo(z_min);
-  result.set_zhi(z_max);
+  result.set_zlo(std::min(top.getSurfaceZ(), bottom.getSurfaceZ()));
+  result.set_zhi(std::max(top.getSurfaceZ(), bottom.getSurfaceZ()));
   return result;
 }
 
-// Helper to construct a dbTransform including 3D Z-offset handling for
-// 3DBlox
 odb::dbTransform getTransform(odb::dbChipInst* inst)
 {
-  int z_offset = inst->getLoc().z();
+  int z = inst->getLoc().z();
   if (inst->getOrient().isMirrorZ()) {
-    z_offset += inst->getMasterChip()->getThickness();
+    z += inst->getMasterChip()->getThickness();
   }
-  return odb::dbTransform(
-      inst->getOrient(),
-      odb::Point3D(inst->getLoc().x(), inst->getLoc().y(), z_offset));
+  return odb::dbTransform(inst->getOrient(),
+                          odb::Point3D(inst->getLoc().x(), inst->getLoc().y(), z));
 }
 
 odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region)
@@ -100,19 +93,17 @@ odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region)
   odb::dbTech* tech = chip->getTech();
 
   if (!tech) {
-    auto tech_prop = odb::dbStringProperty::find(chip, "3dblox_tech");
-    if (tech_prop) {
-      tech = chip->getDb()->findTech(tech_prop->getValue().c_str());
+    if (auto prop = odb::dbStringProperty::find(chip, "3dblox_tech")) {
+      tech = chip->getDb()->findTech(prop->getValue().c_str());
     }
   }
-
   if (!layer) {
-    auto layer_prop = odb::dbStringProperty::find(region, "3dblox_layer");
-    if (layer_prop && tech) {
-      layer = tech->findLayer(layer_prop->getValue().c_str());
+    if (auto prop = odb::dbStringProperty::find(region, "3dblox_layer")) {
+      if (tech) {
+        layer = tech->findLayer(prop->getValue().c_str());
+      }
     }
   }
-
   if (!layer || !tech) {
     return region->getCuboid();
   }
@@ -136,18 +127,16 @@ odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region)
     }
   }
 
-  int z_top, z_bot, chip_thick = chip->getThickness();
-  auto side = region->getSide();
-  if (side == odb::dbChipRegion::Side::BACK) {
+  int z_top, z_bot;
+  if (region->getSide() == odb::dbChipRegion::Side::BACK) {
     z_top = layer_z;
     z_bot = layer_z - target_thick;
   } else {
-    z_top = std::max(0, chip_thick - (int) (total_thick - layer_z));
+    z_top = std::max(0, (int) chip->getThickness() - (int) (total_thick - layer_z));
     z_bot = z_top - target_thick;
   }
   odb::Rect box = region->getBox();
-  return odb::Cuboid(
-      box.xMin(), box.yMin(), z_bot, box.xMax(), box.yMax(), z_top);
+  return odb::Cuboid(box.xMin(), box.yMin(), z_bot, box.xMax(), box.yMax(), z_top);
 }
 
 }  // namespace
@@ -156,138 +145,60 @@ namespace odb {
 
 int UnfoldedRegion::getSurfaceZ() const
 {
-  if (isFacingUp()) {
-    return cuboid.zMax();
-  }
-  if (isFacingDown()) {
-    return cuboid.zMin();
-  }
-  return cuboid.zCenter();
+  return isFacingUp() ? cuboid.zMax() : (isFacingDown() ? cuboid.zMin() : cuboid.zCenter());
 }
 
-bool UnfoldedRegion::isFacingUp() const
-{
-  return effective_side == dbChipRegion::Side::FRONT;
-}
-
-bool UnfoldedRegion::isFacingDown() const
-{
-  return effective_side == dbChipRegion::Side::BACK;
-}
-
-bool UnfoldedRegion::isInternal() const
-{
-  return effective_side == dbChipRegion::Side::INTERNAL;
-}
-
-bool UnfoldedRegion::isInternalExt() const
-{
-  return effective_side == dbChipRegion::Side::INTERNAL_EXT;
-}
+bool UnfoldedRegion::isFacingUp() const { return effective_side == dbChipRegion::Side::FRONT; }
+bool UnfoldedRegion::isFacingDown() const { return effective_side == dbChipRegion::Side::BACK; }
+bool UnfoldedRegion::isInternal() const { return effective_side == dbChipRegion::Side::INTERNAL; }
+bool UnfoldedRegion::isInternalExt() const { return effective_side == dbChipRegion::Side::INTERNAL_EXT; }
 
 bool UnfoldedConnection::isValid() const
 {
-  if (is_bterm_connection) {
-    return true;  // BTerms valid by logic
+  if (is_bterm_connection || !top_region || !bottom_region) {
+    return true;
   }
-  // Virtual connections (null regions) are not geometrically validated
-  if (!top_region || !bottom_region) {
-    return true;  // Considered valid by definition
-  }
-
-  // 1. XY Overlap
   if (!top_region->cuboid.xyIntersects(bottom_region->cuboid)) {
     return false;
   }
-
-  // 2. Embedded Chiplet Support (INTERNAL_EXT)
-  bool top_is_embedded_host = top_region->isInternalExt();
-  bool bottom_is_embedded_host = bottom_region->isInternalExt();
-
-  if (top_is_embedded_host || bottom_is_embedded_host) {
+  if (top_region->isInternalExt() || bottom_region->isInternalExt()) {
     return true;
   }
 
-  // 3. Connectability Check (Facing Direction & Z Ordering)
-  bool top_faces_down = top_region->isFacingDown();
-  bool bot_faces_up = bottom_region->isFacingUp();
+  bool top_faces_down = top_region->isFacingDown() || top_region->isInternal();
+  bool bot_faces_up = bottom_region->isFacingUp() || bottom_region->isInternal();
+  bool top_faces_up = top_region->isFacingUp() || top_region->isInternal();
+  bool bot_faces_down = bottom_region->isFacingDown() || bottom_region->isInternal();
 
-  bool top_faces_up = top_region->isFacingUp();
-  bool bot_faces_down = bottom_region->isFacingDown();
+  bool std_pair = top_faces_down && bot_faces_up;
+  bool inv_pair = top_faces_up && bot_faces_down;
 
-  bool top_is_internal = top_region->isInternal();
-  bool bot_is_internal = bottom_region->isInternal();
-
-  // Valid Pair 1: Standard (Top chip looking down, Bottom chip looking up)
-  // OR one is INTERNAL (assumed to be connectable from both sides or embedded)
-  bool standard_pair = (top_faces_down || top_is_internal)
-                       && (bot_faces_up || bot_is_internal);
-
-  // Valid Pair 2: Inverted/Interposer (Top chip looking up, Bottom chip looking
-  // down)
-  bool inverted_pair = (top_faces_up || top_is_internal)
-                       && (bot_faces_down || bot_is_internal);
-
-  if (!standard_pair && !inverted_pair) {
+  if (!std_pair && !inv_pair) {
     return false;
   }
 
-  // 4. Z-Gap & Ordering
   int top_z = top_region->getSurfaceZ();
-  int bottom_z = bottom_region->getSurfaceZ();
+  int bot_z = bottom_region->getSurfaceZ();
 
   if (top_region->isInternal() || bottom_region->isInternal()) {
-    // Internal regions are treated as volumes.
-    // 1. If they strictly overlap in Z, they are connected.
-    int t_min = top_region->cuboid.zMin();
-    int t_max = top_region->cuboid.zMax();
-    int b_min = bottom_region->cuboid.zMin();
-    int b_max = bottom_region->cuboid.zMax();
-
-    if (std::max(t_min, b_min) <= std::min(t_max, b_max)) {
+    if (std::max(top_region->cuboid.zMin(), bottom_region->cuboid.zMin())
+        <= std::min(top_region->cuboid.zMax(), bottom_region->cuboid.zMax())) {
       return true;
     }
-
-    // 2. If disjoint, use the appropriate surface Z based on pair logic
-    if (standard_pair) {
-      // Top (Upper) >= Bot (Lower).
-      // Top connects from its bottom (zMin). Bot connects from its top (zMax).
-      if (top_region->isInternal()) {
-        top_z = t_min;
-      }
-      if (bottom_region->isInternal()) {
-        bottom_z = b_max;
-      }
+    if (std_pair) {
+      if (top_region->isInternal()) top_z = top_region->cuboid.zMin();
+      if (bottom_region->isInternal()) bot_z = bottom_region->cuboid.zMax();
     } else {
-      // Bot (Upper) >= Top (Lower).
-      // Bot connects from its bottom (zMin). Top connects from its top (zMax).
-      if (bottom_region->isInternal()) {
-        bottom_z = b_min;
-      }
-      if (top_region->isInternal()) {
-        top_z = t_max;
-      }
+      if (bottom_region->isInternal()) bot_z = bottom_region->cuboid.zMin();
+      if (top_region->isInternal()) top_z = top_region->cuboid.zMax();
     }
   }
 
-  if (standard_pair) {
-    // Top(Down) should be >= Bot(Up)
-    if (top_z < bottom_z) {
-      return false;
-    }
-  } else {
-    // Top(Up) and Bot(Down) -> Bot should be >= Top
-    if (bottom_z < top_z) {
-      return false;
-    }
-  }
-
-  int gap = std::abs(top_z - bottom_z);
-  if (gap > connection->getThickness()) {
+  if ((std_pair && top_z < bot_z) || (!std_pair && bot_z < top_z)) {
     return false;
   }
 
-  return true;
+  return std::abs(top_z - bot_z) <= connection->getThickness();
 }
 
 bool UnfoldedChip::isParentOf(const UnfoldedChip* other) const
@@ -295,12 +206,7 @@ bool UnfoldedChip::isParentOf(const UnfoldedChip* other) const
   if (chip_inst_path.size() >= other->chip_inst_path.size()) {
     return false;
   }
-  for (size_t i = 0; i < chip_inst_path.size(); i++) {
-    if (chip_inst_path[i] != other->chip_inst_path[i]) {
-      return false;
-    }
-  }
-  return true;
+  return std::equal(chip_inst_path.begin(), chip_inst_path.end(), other->chip_inst_path.begin());
 }
 
 std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
@@ -312,57 +218,42 @@ std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
     return {};
   }
 
-  utl::UnionFind uf(static_cast<int>(connected_bumps.size()));
-
-  // 1. Group bumps by region
+  utl::UnionFind uf(connected_bumps.size());
   std::map<UnfoldedRegion*, std::vector<size_t>> bumps_by_region;
   for (size_t i = 0; i < connected_bumps.size(); i++) {
     bumps_by_region[connected_bumps[i]->parent_region].push_back(i);
   }
 
-  // 2. Group regions by chip to unite bumps on the same chip
   std::map<UnfoldedChip*, std::vector<UnfoldedRegion*>> regions_by_chip;
   for (auto& [region, _] : bumps_by_region) {
     regions_by_chip[region->parent_chip].push_back(region);
   }
 
   for (auto& [chip, regions] : regions_by_chip) {
-    int first_idx = -1;
+    int first = -1;
     for (auto* region : regions) {
       for (size_t idx : bumps_by_region.at(region)) {
-        if (first_idx == -1) {
-          first_idx = static_cast<int>(idx);
-        } else {
-          uf.unite(first_idx, static_cast<int>(idx));
-        }
+        if (first == -1) first = idx;
+        else uf.unite(first, idx);
       }
     }
   }
 
-  // 3. Check connectivity between regions across chips
   for (const auto& conn : connections) {
-    if (!conn.isValid()) {
-      continue;
-    }
+    if (!conn.isValid()) continue;
     auto it1 = bumps_by_region.find(conn.top_region);
     auto it2 = bumps_by_region.find(conn.bottom_region);
 
     if (it1 != bumps_by_region.end() && it2 != bumps_by_region.end()) {
       const auto& idxs1 = it1->second;
       const auto& idxs2 = it2->second;
-
-      // Check Z distance between regions
-      int dz = std::abs(connected_bumps[idxs1[0]]->global_position.z()
-                        - connected_bumps[idxs2[0]]->global_position.z());
-
-      if (dz <= conn.connection->getThickness()) {
+      if (std::abs(connected_bumps[idxs1[0]]->global_position.z() - 
+                   connected_bumps[idxs2[0]]->global_position.z()) <= conn.connection->getThickness()) {
         for (size_t i1 : idxs1) {
-          const auto& p1 = connected_bumps[i1]->global_position;
           for (size_t i2 : idxs2) {
-            const auto& p2 = connected_bumps[i2]->global_position;
-            if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
-                && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
-              uf.unite(static_cast<int>(i1), static_cast<int>(i2));
+            if (std::abs(connected_bumps[i1]->global_position.x() - connected_bumps[i2]->global_position.x()) <= bump_pitch_tolerance &&
+                std::abs(connected_bumps[i1]->global_position.y() - connected_bumps[i2]->global_position.y()) <= bump_pitch_tolerance) {
+              uf.unite(i1, i2);
             }
           }
         }
@@ -370,50 +261,27 @@ std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
     }
   }
 
-  // Find the largest connected group
   std::map<int, std::vector<size_t>> groups;
   for (size_t i = 0; i < connected_bumps.size(); i++) {
-    groups[uf.find(static_cast<int>(i))].push_back(i);
+    groups[uf.find(i)].push_back(i);
   }
+  if (groups.size() <= 1) return {};
 
-  // If only one group, all bumps are connected
-  if (groups.size() <= 1) {
-    return {};
-  }
-
-  // Find the largest group and return bumps from all other groups
-  size_t max_size = 0;
-  int max_root = -1;
-  for (const auto& [root, indices] : groups) {
-    if (indices.size() > max_size) {
-      max_size = indices.size();
-      max_root = root;
-    }
-  }
+  auto max_group = std::max_element(groups.begin(), groups.end(),
+      [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
 
   std::vector<UnfoldedBump*> disconnected;
-  for (const auto& [root, indices] : groups) {
-    if (root != max_root) {
-      for (size_t idx : indices) {
-        disconnected.push_back(connected_bumps[idx]);
-      }
+  for (auto& [root, indices] : groups) {
+    if (root != max_group->first) {
+      for (size_t idx : indices) disconnected.push_back(connected_bumps[idx]);
     }
   }
   return disconnected;
 }
 
-std::string UnfoldedChip::getName() const
-{
-  return getChipPathKey(chip_inst_path);
-}
+std::string UnfoldedChip::getName() const { return getChipPathKey(chip_inst_path); }
 
-std::string UnfoldedChip::getPathKey() const
-{
-  return getName();
-}
-
-UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip)
-    : logger_(logger)
+UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip) : logger_(logger)
 {
   for (dbChipInst* chip_inst : chip->getChipInsts()) {
     std::vector<dbChipInst*> path;
@@ -430,189 +298,112 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* chip_inst,
 {
   dbChip* master_chip = chip_inst->getMasterChip();
   path.push_back(chip_inst);
-  UnfoldedChip unfolded_chip;
-  unfolded_chip.chip_inst_path = path;
+  UnfoldedChip uf_chip;
+  uf_chip.chip_inst_path = path;
 
-  // Initial master cuboid (leaf) or merged sub-instances (HIER)
   if (master_chip->getChipType() == dbChip::ChipType::HIER) {
-    unfolded_chip.cuboid.mergeInit();
-    for (auto sub_inst : master_chip->getChipInsts()) {
-      Cuboid sub_local_cuboid;
-      buildUnfoldedChip(sub_inst, path, sub_local_cuboid);
-      unfolded_chip.cuboid.merge(sub_local_cuboid);
+    uf_chip.cuboid.mergeInit();
+    for (auto sub : master_chip->getChipInsts()) {
+      Cuboid sub_local;
+      buildUnfoldedChip(sub, path, sub_local);
+      uf_chip.cuboid.merge(sub_local);
     }
   } else {
-    unfolded_chip.cuboid = master_chip->getCuboid();
+    uf_chip.cuboid = master_chip->getCuboid();
   }
 
-  // local_cuboid for parent is this chip's master-coord cuboid transformed
-  // by this instance's transform.
-  local_cuboid = unfolded_chip.cuboid;
-  dbTransform t_inst = getTransform(chip_inst);
-  t_inst.apply(local_cuboid);
+  local_cuboid = uf_chip.cuboid;
+  getTransform(chip_inst).apply(local_cuboid);
 
-  // GLOBAL cuboid for the UnfoldedChip object
-  // Calculate total transform for the path
-  dbTransform total_transform;  // Identity
+  dbTransform total;
   for (auto inst : path | std::views::reverse) {
-    dbTransform t = getTransform(inst);
-    // total = t * total
-    total_transform.concat(t, total_transform);
+    total.concat(getTransform(inst), total);
   }
-  unfolded_chip.transform = total_transform;
-  total_transform.apply(unfolded_chip.cuboid);
+  uf_chip.transform = total;
+  total.apply(uf_chip.cuboid);
+  uf_chip.z_flipped = isPathZFlipped(path);
 
-  bool z_flipped = false;
-  for (auto inst : path) {
-    if (inst->getOrient().isMirrorZ()) {
-      z_flipped = !z_flipped;
-    }
-  }
-  unfolded_chip.z_flipped = z_flipped;
-
-  // Process Regions
   for (auto* region_inst : chip_inst->getRegions()) {
     UnfoldedRegion uf_region;
     uf_region.region_inst = region_inst;
-    uf_region.parent_chip = nullptr;  // Set later
-    uf_region.effective_side
-        = computeEffectiveSide(region_inst->getChipRegion()->getSide(), path);
-
+    uf_region.effective_side = computeEffectiveSide(region_inst->getChipRegion()->getSide(), path);
     uf_region.cuboid = getCorrectedCuboid(region_inst->getChipRegion());
-
-    total_transform.apply(uf_region.cuboid);
-
-    unfoldBumps(uf_region, total_transform);
-    unfolded_chip.regions.push_back(uf_region);
+    total.apply(uf_region.cuboid);
+    unfoldBumps(uf_region, total);
+    uf_chip.regions.push_back(uf_region);
   }
 
-  unfolded_chips_.push_back(unfolded_chip);
-  UnfoldedChip* stable_chip_ptr = &unfolded_chips_.back();
-  for (auto& region : stable_chip_ptr->regions) {
-    region.parent_chip = stable_chip_ptr;
-    stable_chip_ptr->region_map[region.region_inst] = &region;
+  unfolded_chips_.push_back(uf_chip);
+  UnfoldedChip* ptr = &unfolded_chips_.back();
+  for (auto& region : ptr->regions) {
+    region.parent_chip = ptr;
+    ptr->region_map[region.region_inst] = &region;
     for (auto& bump : region.bumps) {
       bump.parent_region = &region;
       bump_inst_map_[bump.bump_inst] = &bump;
     }
   }
-  chip_path_map_[stable_chip_ptr->getPathKey()] = stable_chip_ptr;
-
+  chip_path_map_[ptr->getName()] = ptr;
   path.pop_back();
-  return stable_chip_ptr;
+  return ptr;
 }
 
-void UnfoldedModel::unfoldBumps(UnfoldedRegion& uf_region,
-                                const dbTransform& transform)
+void UnfoldedModel::unfoldBumps(UnfoldedRegion& uf_region, const dbTransform& transform)
 {
   for (auto* bump_inst : uf_region.region_inst->getChipBumpInsts()) {
     dbChipBump* bump = bump_inst->getChipBump();
-    UnfoldedBump uf_bump;
-    uf_bump.bump_inst = bump_inst;
-
-    dbInst* inst = bump->getInst();
-    if (!inst) {
-      continue;
-    }
-    Point local_xy = inst->getLocation();
-    Point global_xy = local_xy;
+    if (!bump->getInst()) continue;
+    
+    Point global_xy = bump->getInst()->getLocation();
     transform.apply(global_xy);
 
-    uf_bump.global_position
-        = Point3D(global_xy.x(), global_xy.y(), uf_region.getSurfaceZ());
+    UnfoldedBump uf_bump{bump_inst, &uf_region, 
+                         Point3D(global_xy.x(), global_xy.y(), uf_region.getSurfaceZ())};
 
-    dbProperty* net_prop = dbProperty::find(bump, "logical_net");
-    if (net_prop && net_prop->getType() == dbProperty::STRING_PROP) {
-      uf_bump.logical_net_name = ((dbStringProperty*) net_prop)->getValue();
-    }
-
-    dbProperty* port_prop = dbProperty::find(bump, "logical_port");
-    if (port_prop && port_prop->getType() == dbProperty::STRING_PROP) {
-      uf_bump.port_name = ((dbStringProperty*) port_prop)->getValue();
-    } else {
+    if (auto prop = dbProperty::find(bump, "logical_net"))
+      uf_bump.logical_net_name = ((dbStringProperty*) prop)->getValue();
+    
+    if (auto prop = dbProperty::find(bump, "logical_port"))
+      uf_bump.port_name = ((dbStringProperty*) prop)->getValue();
+    else
       uf_bump.port_name = bump_inst->getName();
-    }
 
     uf_region.bumps.push_back(uf_bump);
   }
 }
 
-UnfoldedChip* UnfoldedModel::findUnfoldedChip(
-    const std::vector<dbChipInst*>& path)
+UnfoldedChip* UnfoldedModel::findUnfoldedChip(const std::vector<dbChipInst*>& path)
 {
-  std::string key = getChipPathKey(path);
-
-  auto it = chip_path_map_.find(key);
-  if (it != chip_path_map_.end()) {
-    return it->second;
-  }
-  return nullptr;
+  auto it = chip_path_map_.find(getChipPathKey(path));
+  return it != chip_path_map_.end() ? it->second : nullptr;
 }
 
-UnfoldedRegion* UnfoldedModel::findUnfoldedRegion(UnfoldedChip* chip,
-                                                  dbChipRegionInst* region_inst)
+UnfoldedRegion* UnfoldedModel::findUnfoldedRegion(UnfoldedChip* chip, dbChipRegionInst* inst)
 {
-  if (!chip || !region_inst) {
-    return nullptr;
-  }
-  auto it = chip->region_map.find(region_inst);
-  if (it != chip->region_map.end()) {
-    return it->second;
-  }
-  return nullptr;
+  if (!chip || !inst) return nullptr;
+  auto it = chip->region_map.find(inst);
+  return it != chip->region_map.end() ? it->second : nullptr;
 }
 
-void UnfoldedModel::unfoldConnections(dbChip* chip)
-{
-  unfoldConnectionsRecursive(chip, {});
-}
+void UnfoldedModel::unfoldConnections(dbChip* chip) { unfoldConnectionsRecursive(chip, {}); }
 
-void UnfoldedModel::unfoldConnectionsRecursive(
-    dbChip* chip,
-    const std::vector<dbChipInst*>& parent_path)
+void UnfoldedModel::unfoldConnectionsRecursive(dbChip* chip, const std::vector<dbChipInst*>& parent_path)
 {
   for (auto* conn : chip->getChipConns()) {
-    auto* top_region_inst = conn->getTopRegion();
-    auto* bottom_region_inst = conn->getBottomRegion();
+    auto top_path = parent_path;
+    for (auto* inst : conn->getTopRegionPath()) top_path.push_back(inst);
+    auto bot_path = parent_path;
+    for (auto* inst : conn->getBottomRegionPath()) bot_path.push_back(inst);
 
-    auto top_full_path = parent_path;
-    for (auto* inst : conn->getTopRegionPath()) {
-      top_full_path.push_back(inst);
-    }
-    UnfoldedChip* top_chip = findUnfoldedChip(top_full_path);
-    UnfoldedRegion* top_region = findUnfoldedRegion(top_chip, top_region_inst);
+    UnfoldedRegion* top = findUnfoldedRegion(findUnfoldedChip(top_path), conn->getTopRegion());
+    UnfoldedRegion* bot = findUnfoldedRegion(findUnfoldedChip(bot_path), conn->getBottomRegion());
 
-    auto bottom_full_path = parent_path;
-    for (auto* inst : conn->getBottomRegionPath()) {
-      bottom_full_path.push_back(inst);
-    }
-    UnfoldedChip* bottom_chip = findUnfoldedChip(bottom_full_path);
-    UnfoldedRegion* bottom_region
-        = findUnfoldedRegion(bottom_chip, bottom_region_inst);
+    if (!top && !bot) continue;
 
-    if (!top_region && !bottom_region) {
-      continue;  // Skip totally virtual/unresolved
-    }
-
-    UnfoldedConnection uf_conn;
-    uf_conn.connection = conn;
-    uf_conn.top_region = top_region;
-    uf_conn.bottom_region = bottom_region;
-
-    uf_conn.is_bterm_connection = false;
-    if (top_region && bottom_region) {
-      uf_conn.connection_cuboid = computeConnectionCuboid(
-          *top_region, *bottom_region, conn->getThickness());
-    }
-
-    // Mark used for INTERNAL_EXT check
-    if (top_region && top_region->isInternalExt()) {
-      top_region->isUsed = true;
-    }
-    if (bottom_region && bottom_region->isInternalExt()) {
-      bottom_region->isUsed = true;
-    }
-
+    UnfoldedConnection uf_conn{conn, top, bot};
+    if (top && bot) uf_conn.connection_cuboid = computeConnectionCuboid(*top, *bot);
+    if (top && top->isInternalExt()) top->isUsed = true;
+    if (bot && bot->isInternalExt()) bot->isUsed = true;
     unfolded_connections_.push_back(uf_conn);
   }
 
@@ -626,24 +417,15 @@ void UnfoldedModel::unfoldConnectionsRecursive(
 void UnfoldedModel::unfoldNets(dbChip* chip)
 {
   for (auto* net : chip->getChipNets()) {
-    UnfoldedNet uf_net;
-    uf_net.chip_net = net;
-
+    UnfoldedNet uf_net{net};
     for (uint32_t i = 0; i < net->getNumBumpInsts(); i++) {
       std::vector<dbChipInst*> path;
-      dbChipBumpInst* bump_inst = net->getBumpInst(i, path);
-
-      auto it = bump_inst_map_.find(bump_inst);
-      if (it != bump_inst_map_.end()) {
-        uf_net.connected_bumps.push_back(it->second);
-      }
+      auto it = bump_inst_map_.find(net->getBumpInst(i, path));
+      if (it != bump_inst_map_.end()) uf_net.connected_bumps.push_back(it->second);
     }
     unfolded_nets_.push_back(uf_net);
   }
-
-  for (auto* inst : chip->getChipInsts()) {
-    unfoldNets(inst->getMasterChip());
-  }
+  for (auto* inst : chip->getChipInsts()) unfoldNets(inst->getMasterChip());
 }
 
 }  // namespace odb

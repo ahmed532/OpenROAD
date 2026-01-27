@@ -81,7 +81,6 @@ struct UnfoldedNet
 struct UnfoldedChip
 {
   std::string getName() const;
-  std::string getPathKey() const;
   bool isParentOf(const UnfoldedChip* other) const;
 
   std::vector<dbChipInst*> chip_inst_path;  // non-owning, managed by dbChip
@@ -90,8 +89,6 @@ struct UnfoldedChip
 
   bool z_flipped = false;
   std::deque<UnfoldedRegion> regions;  // owning container
-  std::vector<UnfoldedConnection*>
-      connected_conns;  // non-owning, points to unfolded_connections_
 
   std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map;
 };
