@@ -75,7 +75,6 @@ struct UnfoldedNet
 struct UnfoldedChip
 {
   std::string name;
-  dbTech* tech = nullptr;
   const std::string& getName() const { return name; }
   bool isParentOf(const UnfoldedChip* other) const;
 
@@ -105,6 +104,7 @@ class UnfoldedModel
                                   std::vector<dbChipInst*>& path,
                                   const dbTransform& parent_xform,
                                   Cuboid& local_cuboid);
+  void registerUnfoldedChip(UnfoldedChip& uf_chip);
   void unfoldRegions(UnfoldedChip& uf_chip,
                      dbChipInst* inst,
                      const dbTransform& transform);

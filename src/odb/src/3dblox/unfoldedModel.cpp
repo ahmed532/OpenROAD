@@ -27,17 +27,6 @@ std::vector<odb::dbChipInst*> concatPath(
   return full;
 }
 
-odb::dbTech* getTech(odb::dbChip* chip)
-{
-  if (auto* tech = chip->getTech()) {
-    return tech;
-  }
-  if (auto prop = odb::dbStringProperty::find(chip, "3dblox_tech")) {
-    return chip->getDb()->findTech(prop->getValue().c_str());
-  }
-  return nullptr;
-}
-
 std::string getFullPathName(const std::vector<odb::dbChipInst*>& path)
 {
   std::string name;
@@ -160,10 +149,7 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   dbTransform total = inst_xform;
   total.concat(parent_xform);
 
-  dbTech* tech = getTech(master);
-
-  UnfoldedChip uf_chip{
-      .name = getFullPathName(path), .tech = tech, .chip_inst_path = path};
+  UnfoldedChip uf_chip{.name = getFullPathName(path), .chip_inst_path = path};
 
   if (master->getChipType() == dbChip::ChipType::HIER) {
     uf_chip.cuboid.mergeInit();
@@ -185,22 +171,26 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   unfoldRegions(uf_chip, inst, total);
 
   unfolded_chips_.push_back(std::move(uf_chip));
-  UnfoldedChip* ptr = &unfolded_chips_.back();
-  for (auto& region : ptr->regions) {
-    region.parent_chip = ptr;
-    ptr->region_map[region.region_inst] = &region;
-    for (auto& bump : region.bumps) {
-      bump.parent_region = &region;
-      bump_inst_map_[bump.bump_inst] = &bump;
-    }
-  }
-  chip_path_map_[ptr->chip_inst_path] = ptr;
+  registerUnfoldedChip(unfolded_chips_.back());
 
   unfoldConnections(master, path);
   unfoldNets(master, path);
 
   path.pop_back();
-  return ptr;
+  return &unfolded_chips_.back();
+}
+
+void UnfoldedModel::registerUnfoldedChip(UnfoldedChip& chip)
+{
+  for (auto& region : chip.regions) {
+    region.parent_chip = &chip;
+    chip.region_map[region.region_inst] = &region;
+    for (auto& bump : region.bumps) {
+      bump.parent_region = &region;
+      bump_inst_map_[bump.bump_inst] = &bump;
+    }
+  }
+  chip_path_map_[chip.chip_inst_path] = &chip;
 }
 
 void UnfoldedModel::unfoldRegions(UnfoldedChip& uf_chip,
