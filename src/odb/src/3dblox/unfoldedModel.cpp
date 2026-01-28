@@ -21,17 +21,6 @@
 
 namespace {
 
-odb::dbTransform getTransform(odb::dbChipInst* inst)
-{
-  int z = inst->getLoc().z();
-  if (inst->getOrient().isMirrorZ()) {
-    z += inst->getMasterChip()->getThickness();
-  }
-  return odb::dbTransform(
-      inst->getOrient(),
-      odb::Point3D(inst->getLoc().x(), inst->getLoc().y(), z));
-}
-
 odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region, odb::dbTech* tech)
 {
   if (!tech) {
@@ -85,7 +74,8 @@ namespace odb {
 
 int UnfoldedRegion::getSurfaceZ() const
 {
-  return isFront() ? cuboid.zMax() : (isBack() ? cuboid.zMin() : cuboid.zCenter());
+  return isFront() ? cuboid.zMax()
+                   : (isBack() ? cuboid.zMin() : cuboid.zCenter());
 }
 
 bool UnfoldedConnection::isValid() const
@@ -268,7 +258,8 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   dbChip* master = inst->getMasterChip();
   path.push_back(inst);
 
-  dbTransform total = getTransform(inst);
+  dbTransform inst_xform = inst->getTransform();
+  dbTransform total = inst_xform;
   total.concat(parent_xform);
 
   std::string name;
@@ -301,7 +292,7 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   }
 
   local = uf_chip.cuboid;
-  getTransform(inst).apply(local);
+  inst_xform.apply(local);
 
   uf_chip.transform = total;
   total.apply(uf_chip.cuboid);

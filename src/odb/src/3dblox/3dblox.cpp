@@ -410,8 +410,11 @@ void ThreeDBlox::createRegion(const ChipletRegion& region, dbChip* chip)
     }
   }
   dbTechLayer* layer_to_pass = (chip->getBlock() != nullptr) ? layer : nullptr;
-  dbChipRegion* chip_region = dbChipRegion::create(
-      chip, region.name, getChipRegionSide(region.side, logger_), layer_to_pass);
+  dbChipRegion* chip_region
+      = dbChipRegion::create(chip,
+                             region.name,
+                             getChipRegionSide(region.side, logger_),
+                             layer_to_pass);
   if (layer != nullptr && layer_to_pass == nullptr) {
     odb::dbStringProperty::create(
         chip_region, "3dblox_layer", layer->getName().c_str());
@@ -566,9 +569,26 @@ void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
                    chip_inst.name);
   }
   inst->setOrient(orient.value());
-  inst->setLoc(Point3D(chip_inst.loc.x * db_->getDbuPerMicron(),
-                       chip_inst.loc.y * db_->getDbuPerMicron(),
-                       chip_inst.z * db_->getDbuPerMicron()));
+  // Standard 3DBlox convention is that 'loc' refers to the origin (0,0) of
+  // the chiplet, not its bounding box lower-left.
+  // Since dbChipInst::setLoc follows the bounding box convention,
+  // we compensate to ensure origin_ == loc.
+  Point3D loc(chip_inst.loc.x * db_->getDbuPerMicron(),
+              chip_inst.loc.y * db_->getDbuPerMicron(),
+              chip_inst.z * db_->getDbuPerMicron());
+  dbChip* master = inst->getMasterChip();
+  Cuboid master_cuboid = master->getCuboid();
+  dbTransform t(inst->getOrient());
+  t.apply(master_cuboid);
+
+  Point3D adjustment(master_cuboid.lll().x(),
+                     master_cuboid.lll().y(),
+                     master_cuboid.lll().z());
+  Point3D adjusted_loc(loc.x() + adjustment.x(),
+                       loc.y() + adjustment.y(),
+                       loc.z() + adjustment.z());
+  inst->setLoc(adjusted_loc);
+
   if (!chip_inst.external.verilog_file.empty()) {
     if (odb::dbProperty::find(chip, "verilog_file") == nullptr) {
       std::string verilog_file = chip_inst.external.verilog_file;
