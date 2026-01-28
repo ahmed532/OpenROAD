@@ -38,10 +38,11 @@ class Checker
 
   void checkInternalExtUsage(const UnfoldedModel& model,
                              dbMarkerCategory* category);
-  void checkConnectivity(odb::dbChip* chip, odb::dbMarkerCategory* category);
-  void checkLogicalAlignment(odb::dbChip* chip,
-                             odb::dbMarkerCategory* category);
+  void checkLogical(dbChip* chip, dbMarkerCategory* category);
 
+  bool getContactSurfaces(const UnfoldedConnection& conn,
+                          int& upper_z,
+                          int& lower_z) const;
   bool isOverlapFullyInConnections(const UnfoldedModel& model,
                                    const UnfoldedChip* chip1,
                                    const UnfoldedChip* chip2,

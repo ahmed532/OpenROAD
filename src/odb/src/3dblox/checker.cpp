@@ -43,7 +43,6 @@ const char* sideToString(dbChipRegion::Side side)
   return "UNKNOWN";
 }
 
-// RAII guard for local STA instance
 class StaReportGuard
 {
  public:
@@ -63,6 +62,11 @@ class StaReportGuard
   std::unique_ptr<sta::Sta> sta_;
 };
 
+using ConnectionMap = std::unordered_map<
+    const UnfoldedChip*,
+    std::unordered_map<const UnfoldedChip*,
+                       std::vector<const UnfoldedConnection*>>>;
+
 }  // namespace
 
 Checker::Checker(utl::Logger* logger) : logger_(logger)
@@ -74,30 +78,34 @@ void Checker::check(dbChip* chip, int bump_pitch_tolerance)
   UnfoldedModel model(logger_, chip);
   auto* top_cat = dbMarkerCategory::createOrReplace(chip, "3DBlox");
   auto* conn_cat = dbMarkerCategory::createOrReplace(top_cat, "Connectivity");
-    auto* phys_cat = dbMarkerCategory::createOrReplace(top_cat, "Physical");
-    auto* log_cat  = dbMarkerCategory::createOrReplace(top_cat, "Logical");
-  
-    checkFloatingChips(model, conn_cat);
-    checkOverlappingChips(model, phys_cat);
-    checkConnectionRegions(model, chip, conn_cat);
-    checkInternalExtUsage(model, conn_cat);
-  
-    checkBumpPhysicalAlignment(model, phys_cat);
-    checkNetConnectivity(model, chip, conn_cat, bump_pitch_tolerance);
-    checkConnectivity(chip, log_cat);
-    checkLogicalAlignment(chip, log_cat);
-  }
-  
+  auto* phys_cat = dbMarkerCategory::createOrReplace(top_cat, "Physical");
+  auto* log_cat = dbMarkerCategory::createOrReplace(top_cat, "Logical");
 
-void Checker::checkConnectivity(dbChip* chip, dbMarkerCategory* category)
+  checkFloatingChips(model, conn_cat);
+  checkOverlappingChips(model, phys_cat);
+  checkConnectionRegions(model, chip, conn_cat);
+  checkInternalExtUsage(model, conn_cat);
+
+  checkBumpPhysicalAlignment(model, phys_cat);
+  checkNetConnectivity(model, chip, conn_cat, bump_pitch_tolerance);
+
+  checkLogical(chip, log_cat);
+}
+
+void Checker::checkLogical(dbChip* chip, dbMarkerCategory* category)
 {
   StaReportGuard sta;
-  std::unordered_set<std::string> loaded;
-  std::unordered_set<dbChip*> processed;
+  std::unordered_set<std::string> loaded_files;
+  std::unordered_set<dbChip*> processed_masters;
+
+  auto* design_cat
+      = dbMarkerCategory::createOrGet(category, "Design Alignment");
+  auto* alignment_cat
+      = dbMarkerCategory::createOrGet(category, "Logical Alignment");
 
   for (auto* inst : chip->getChipInsts()) {
     auto* master = inst->getMasterChip();
-    if (!master || !processed.insert(master).second) {
+    if (!master || !processed_masters.insert(master).second) {
       continue;
     }
 
@@ -107,7 +115,7 @@ void Checker::checkConnectivity(dbChip* chip, dbMarkerCategory* category)
     }
 
     std::string file = static_cast<dbStringProperty*>(prop)->getValue();
-    if (loaded.insert(file).second) {
+    if (loaded_files.insert(file).second) {
       logger_->info(utl::ODB,
                     552,
                     "Reading Verilog file {} for design {}",
@@ -119,59 +127,82 @@ void Checker::checkConnectivity(dbChip* chip, dbMarkerCategory* category)
     }
 
     auto* network = sta->network();
-    std::string design = master->getName();
-    sta::Cell* cell = nullptr;
-    std::vector<std::string> modules;
-
+    sta::Cell* top_cell = nullptr;
     auto* lib_iter = network->libraryIterator();
     while (lib_iter->hasNext()) {
-      auto* lib = lib_iter->next();
-      if ((cell = network->findCell(lib, design.c_str()))) {
+      if ((top_cell = network->findCell(lib_iter->next(), master->getName()))) {
         break;
-      }
-      sta::PatternMatch all("*");
-      for (auto* c : network->findCellsMatching(lib, &all)) {
-        modules.emplace_back(network->name(c));
       }
     }
     delete lib_iter;
 
-    if (!cell) {
-      auto* cat = dbMarkerCategory::createOrGet(category, "Design Alignment");
-      auto* marker = dbMarker::create(cat);
-      std::string list = fmt::format("{}", fmt::join(modules, ", "));
+    if (!top_cell) {
+      std::vector<std::string> modules;
+      auto* li = network->libraryIterator();
+      while (li->hasNext()) {
+        sta::PatternMatch all("*");
+        for (auto* c : network->findCellsMatching(li->next(), &all)) {
+          modules.emplace_back(network->name(c));
+        }
+      }
+      delete li;
+
+      auto* marker = dbMarker::create(design_cat);
       std::string msg = fmt::format(
           "Rule 1 Violation: Verilog module {} not found in file {}. Available "
           "modules: {}",
-          design,
+          master->getName(),
           file,
-          modules.empty() ? "None" : list);
+          modules.empty() ? "None"
+                          : fmt::format("{}", fmt::join(modules, ", ")));
       marker->setComment(msg);
       marker->addSource(master);
       logger_->warn(utl::ODB, 550, msg);
       continue;
     }
 
-    std::unordered_set<std::string_view> existing;
+    std::unordered_set<std::string_view> verilog_nets;
+    auto* port_iter = network->portBitIterator(top_cell);
+    while (port_iter->hasNext()) {
+      verilog_nets.insert(network->name(port_iter->next()));
+    }
+    delete port_iter;
+
+    std::unordered_set<std::string_view> db_nets;
     for (auto* net : master->getChipNets()) {
-      existing.insert(net->getName());
+      db_nets.insert(net->getName());
     }
 
-    auto* port_iter = network->portBitIterator(cell);
-    while (port_iter->hasNext()) {
-      const char* name = network->name(port_iter->next());
-      if (existing.insert(name).second) {
-        dbChipNet::create(master, name);
+    for (const auto& name : verilog_nets) {
+      if (db_nets.insert(name).second) {
+        dbChipNet::create(master, std::string(name).c_str());
         debugPrint(logger_,
                    utl::ODB,
                    "3dblox",
                    1,
                    "Created dbChipNet {} for chip {}",
                    name,
-                   design);
+                   master->getName());
       }
     }
-    delete port_iter;
+
+    for (auto* region : master->getChipRegions()) {
+      for (auto* bump : region->getChipBumps()) {
+        auto* net = bump->getNet();
+        if (net && !verilog_nets.contains(net->getName())) {
+          auto* marker = dbMarker::create(alignment_cat);
+          marker->setComment(fmt::format("Logical net {} not found in Verilog",
+                                         net->getName()));
+          marker->addSource(bump);
+          logger_->warn(
+              utl::ODB,
+              560,
+              "Logical net {} in bmap for chiplet {} not found in Verilog",
+              net->getName(),
+              master->getName());
+        }
+      }
+    }
   }
 }
 
@@ -180,7 +211,6 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
 {
   const auto& chips = model.getChips();
   utl::UnionFind uf(chips.size());
-
   std::unordered_map<const UnfoldedChip*, int> chip_map;
   for (int i = 0; i < (int) chips.size(); ++i) {
     chip_map[&chips[i]] = i;
@@ -227,7 +257,6 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
     auto* cat = dbMarkerCategory::createOrReplace(category, "Floating chips");
     logger_->warn(
         utl::ODB, 151, "Found {} floating chip sets", groups.size() - 1);
-
     for (size_t i = 1; i < groups.size(); ++i) {
       auto* marker = dbMarker::create(cat);
       for (auto* chip : groups[i]) {
@@ -247,7 +276,15 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
                                     dbMarkerCategory* category)
 {
   const auto& chips = model.getChips();
-  std::vector<std::pair<const UnfoldedChip*, const UnfoldedChip*>> overlaps;
+  ConnectionMap conn_map;
+  for (const auto& conn : model.getConnections()) {
+    if (conn.top_region && conn.bottom_region) {
+      auto* c1 = conn.top_region->parent_chip;
+      auto* c2 = conn.bottom_region->parent_chip;
+      conn_map[c1][c2].push_back(&conn);
+      conn_map[c2][c1].push_back(&conn);
+    }
+  }
 
   std::vector<int> sorted(chips.size());
   std::iota(sorted.begin(), sorted.end(), 0);
@@ -255,21 +292,21 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
     return chips[a].cuboid.xMin() < chips[b].cuboid.xMin();
   });
 
+  std::vector<std::pair<const UnfoldedChip*, const UnfoldedChip*>> overlaps;
   for (int i = 0; i < (int) sorted.size(); ++i) {
-    const auto& c1 = chips[sorted[i]].cuboid;
+    auto* c1 = &chips[sorted[i]];
     for (int j = i + 1; j < (int) sorted.size(); ++j) {
-      if (chips[sorted[j]].cuboid.xMin() >= c1.xMax()) {
+      auto* c2 = &chips[sorted[j]];
+      if (c2->cuboid.xMin() >= c1->cuboid.xMax()) {
         break;
       }
-      if (chips[sorted[i]].isParentOf(&chips[sorted[j]])
-          || chips[sorted[j]].isParentOf(&chips[sorted[i]])) {
+      if (c1->isParentOf(c2) || c2->isParentOf(c1)) {
         continue;
       }
-      if (c1.overlaps(chips[sorted[j]].cuboid)) {
-        auto intersect = c1.intersect(chips[sorted[j]].cuboid);
+      if (c1->cuboid.overlaps(c2->cuboid)) {
         if (!isOverlapFullyInConnections(
-                model, &chips[sorted[i]], &chips[sorted[j]], intersect)) {
-          overlaps.emplace_back(&chips[sorted[i]], &chips[sorted[j]]);
+                model, c1, c2, c1->cuboid.intersect(c2->cuboid))) {
+          overlaps.emplace_back(c1, c2);
         }
       }
     }
@@ -300,7 +337,6 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
 {
   auto* cat = dbMarkerCategory::createOrReplace(category, "Connected regions");
   int count = 0;
-
   for (const auto& conn : model.getConnections()) {
     if (!conn.top_region || !conn.bottom_region) {
       if (conn.connection->getTopRegion()
@@ -312,7 +348,6 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
       }
       continue;
     }
-
     if (!isValid(conn)) {
       auto* marker = dbMarker::create(cat);
       marker->addSource(conn.connection);
@@ -402,22 +437,21 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
     if (net.connected_bumps.size() < 2) {
       continue;
     }
-
     utl::UnionFind uf(net.connected_bumps.size());
     std::unordered_map<UnfoldedChip*, int> chip_rep;
     std::unordered_map<UnfoldedRegion*, std::vector<int>> region_bumps;
 
     for (int i = 0; i < (int) net.connected_bumps.size(); ++i) {
       auto* b = net.connected_bumps[i];
-      auto* chip = b->parent_region->parent_chip;
-      if (!chip_rep.try_emplace(chip, i).second) {
-        uf.unite(i, chip_rep[chip]);
+      if (!chip_rep.try_emplace(b->parent_region->parent_chip, i).second) {
+        uf.unite(i, chip_rep[b->parent_region->parent_chip]);
       }
       region_bumps[b->parent_region].push_back(i);
     }
 
     for (const auto& conn : model.getConnections()) {
-      if (!isValid(conn)) {
+      int t_z, b_z;
+      if (!getContactSurfaces(conn, t_z, b_z)) {
         continue;
       }
       auto it1 = region_bumps.find(conn.top_region);
@@ -426,16 +460,32 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
         continue;
       }
 
-      if (std::abs(net.connected_bumps[it1->second[0]]->global_position.z()
-                   - net.connected_bumps[it2->second[0]]->global_position.z())
-          <= conn.connection->getThickness()) {
-        for (int i1 : it1->second) {
+      if (std::abs(t_z - b_z) <= conn.connection->getThickness()) {
+        std::unordered_map<int64_t, int> xy_map;
+        auto pack = [](const Point3D& p) {
+          return (static_cast<int64_t>(p.x()) << 32)
+                 | (static_cast<uint32_t>(p.y()));
+        };
+        if (bump_pitch_tolerance == 0) {
+          for (int i1 : it1->second) {
+            xy_map[pack(net.connected_bumps[i1]->global_position)] = i1;
+          }
           for (int i2 : it2->second) {
+            auto hit
+                = xy_map.find(pack(net.connected_bumps[i2]->global_position));
+            if (hit != xy_map.end()) {
+              uf.unite(hit->second, i2);
+            }
+          }
+        } else {
+          for (int i1 : it1->second) {
             const auto& p1 = net.connected_bumps[i1]->global_position;
-            const auto& p2 = net.connected_bumps[i2]->global_position;
-            if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
-                && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
-              uf.unite(i1, i2);
+            for (int i2 : it2->second) {
+              const auto& p2 = net.connected_bumps[i2]->global_position;
+              if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
+                  && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
+                uf.unite(i1, i2);
+              }
             }
           }
         }
@@ -453,13 +503,13 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
           groups, [](auto& a, auto& b) { return a.size() < b.size(); });
       auto* marker = dbMarker::create(cat);
       marker->addSource(net.chip_net);
-      int disconnected_count = 0;
+      int disconnected = 0;
       for (auto it = groups.begin(); it != groups.end(); ++it) {
         if (it == max_it) {
           continue;
         }
         for (int idx : *it) {
-          disconnected_count++;
+          disconnected++;
           if (net.connected_bumps[idx]->bump_inst) {
             marker->addSource(net.connected_bumps[idx]->bump_inst);
           }
@@ -468,46 +518,8 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
       marker->setComment(
           fmt::format("Net {} has {} disconnected bump(s) out of {} total.",
                       net.chip_net->getName(),
-                      disconnected_count,
+                      disconnected,
                       net.connected_bumps.size()));
-    }
-  }
-}
-
-void Checker::checkLogicalAlignment(dbChip* chip,
-                                    dbMarkerCategory* parent_category)
-{
-  std::unordered_set<dbChip*> processed;
-  auto* cat
-      = dbMarkerCategory::createOrGet(parent_category, "Logical Alignment");
-
-  for (auto* inst : chip->getChipInsts()) {
-    auto* master = inst->getMasterChip();
-    if (!processed.insert(master).second) {
-      continue;
-    }
-
-    std::unordered_set<std::string_view> net_names;
-    for (auto* net : master->getChipNets()) {
-      net_names.insert(net->getName());
-    }
-
-    for (auto* region : master->getChipRegions()) {
-      for (auto* bump : region->getChipBumps()) {
-        auto* net = bump->getNet();
-        if (net && !net_names.contains(net->getName())) {
-          auto* marker = dbMarker::create(cat);
-          marker->setComment(fmt::format("Logical net {} not found in Verilog",
-                                         net->getName()));
-          marker->addSource(bump);
-          logger_->warn(
-              utl::ODB,
-              560,
-              "Logical net {} in bmap for chiplet {} not found in Verilog",
-              net->getName(),
-              master->getName());
-        }
-      }
     }
   }
 }
@@ -524,13 +536,16 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
       overlap.xMin(), overlap.yMin(), overlap.xMax(), overlap.yMax());
 
   for (const auto& conn : model.getConnections()) {
-    if (!isValid(conn) || !conn.top_region || !conn.bottom_region) {
+    if (!conn.top_region || !conn.bottom_region) {
       continue;
     }
     auto* r1 = conn.top_region;
     auto* r2 = conn.bottom_region;
     if ((r1->parent_chip == chip1 && r2->parent_chip == chip2)
         || (r1->parent_chip == chip2 && r2->parent_chip == chip1)) {
+      if (!isValid(conn)) {
+        continue;
+      }
       auto auth = [&](auto* r) {
         return (r->isInternalExt() || r->isInternal())
                && Rect(r->cuboid.xMin(),
@@ -547,51 +562,68 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
   return false;
 }
 
-bool Checker::isValid(const UnfoldedConnection& conn) const
+bool Checker::getContactSurfaces(const UnfoldedConnection& conn,
+                                 int& top_z,
+                                 int& bot_z) const
 {
   auto* r1 = conn.top_region;
   auto* r2 = conn.bottom_region;
   if (!r1 || !r2) {
-    return true;
-  }
-  if (!r1->cuboid.xyIntersects(r2->cuboid)) {
-    return false;
-  }
-  if (r1->isInternalExt() || r2->isInternalExt()) {
-    return true;
-  }
-
-  const auto& c1 = r1->cuboid;
-  const auto& c2 = r2->cuboid;
-  if ((r1->isInternal() || r2->isInternal())
-      && std::max(c1.zMin(), c2.zMin()) <= std::min(c1.zMax(), c2.zMax())) {
-    return true;
-  }
-
-  auto faces_up = [](auto* r) { return r->isFront() || r->isInternal(); };
-  auto faces_down = [](auto* r) { return r->isBack() || r->isInternal(); };
-
-  bool can_std = faces_down(r1) && faces_up(r2);
-  bool can_inv = faces_up(r1) && faces_down(r2);
-  if (!can_std && !can_inv) {
     return false;
   }
 
-  bool r1_above = c1.zCenter() >= c2.zCenter();
-  if (can_std && can_inv) {
-    if (r1_above) {
-      can_inv = false;
+  auto up = [](auto* r) { return r->isFront() || r->isInternal(); };
+  auto down = [](auto* r) { return r->isBack() || r->isInternal(); };
+
+  bool r1_down_r2_up = down(r1) && up(r2);
+  bool r1_up_r2_down = up(r1) && down(r2);
+  if (!r1_down_r2_up && !r1_up_r2_down) {
+    return false;
+  }
+
+  if (r1_down_r2_up && r1_up_r2_down) {
+    if (r1->cuboid.zCenter() < r2->cuboid.zCenter()) {
+      r1_down_r2_up = false;
     } else {
-      can_std = false;
+      r1_up_r2_down = false;
     }
   }
 
-  auto* top = can_std ? r1 : r2;
-  auto* bot = can_std ? r2 : r1;
-  int top_s = top->isInternal() ? top->cuboid.zMin() : top->getSurfaceZ();
-  int bot_s = bot->isInternal() ? bot->cuboid.zMax() : bot->getSurfaceZ();
+  auto* top = r1_down_r2_up ? r1 : r2;
+  auto* bot = r1_down_r2_up ? r2 : r1;
+  top_z = top->isInternal() ? top->cuboid.zMin() : top->getSurfaceZ();
+  bot_z = bot->isInternal() ? bot->cuboid.zMax() : bot->getSurfaceZ();
+  return true;
+}
 
-  return (top_s >= bot_s) && (top_s - bot_s <= conn.connection->getThickness());
+bool Checker::isValid(const UnfoldedConnection& conn) const
+{
+  int t_z, b_z;
+  if (!conn.top_region || !conn.bottom_region) {
+    return true;
+  }
+  if (!conn.top_region->cuboid.xyIntersects(conn.bottom_region->cuboid)) {
+    return false;
+  }
+  if (conn.top_region->isInternalExt() || conn.bottom_region->isInternalExt()) {
+    return true;
+  }
+
+  if ((conn.top_region->isInternal() || conn.bottom_region->isInternal())
+      && std::max(conn.top_region->cuboid.zMin(),
+                  conn.bottom_region->cuboid.zMin())
+             <= std::min(conn.top_region->cuboid.zMax(),
+                         conn.bottom_region->cuboid.zMax())) {
+    return true;
+  }
+
+  if (!getContactSurfaces(conn, t_z, b_z)) {
+    return false;
+  }
+  if (t_z < b_z) {
+    return false;
+  }
+  return (t_z - b_z) <= conn.connection->getThickness();
 }
 
 }  // namespace odb
