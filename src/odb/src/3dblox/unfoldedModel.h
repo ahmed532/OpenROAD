@@ -105,9 +105,13 @@ class UnfoldedModel
                                   std::vector<dbChipInst*>& path,
                                   const dbTransform& parent_xform,
                                   Cuboid& local_cuboid);
+  void unfoldRegions(UnfoldedChip& uf_chip,
+                     dbChipInst* inst,
+                     const dbTransform& transform);
   void unfoldBumps(UnfoldedRegion& uf_region, const dbTransform& transform);
-  void unfoldNetsAndConnections(dbChip* chip,
-                                const std::vector<dbChipInst*>& parent_path);
+  void unfoldConnections(dbChip* chip,
+                         const std::vector<dbChipInst*>& parent_path);
+  void unfoldNets(dbChip* chip, const std::vector<dbChipInst*>& parent_path);
 
   UnfoldedChip* findUnfoldedChip(const std::vector<dbChipInst*>& path);
   UnfoldedRegion* findUnfoldedRegion(UnfoldedChip* chip,

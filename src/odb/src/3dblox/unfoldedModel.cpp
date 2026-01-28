@@ -144,7 +144,8 @@ UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip)
     Cuboid local;
     buildUnfoldedChip(inst, path, dbTransform(), local);
   }
-  unfoldNetsAndConnections(chip, {});
+  unfoldConnections(chip, {});
+  unfoldNets(chip, {});
 }
 
 UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
@@ -181,6 +182,31 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   uf_chip.transform = total;
   total.apply(uf_chip.cuboid);
 
+  unfoldRegions(uf_chip, inst, total);
+
+  unfolded_chips_.push_back(std::move(uf_chip));
+  UnfoldedChip* ptr = &unfolded_chips_.back();
+  for (auto& region : ptr->regions) {
+    region.parent_chip = ptr;
+    ptr->region_map[region.region_inst] = &region;
+    for (auto& bump : region.bumps) {
+      bump.parent_region = &region;
+      bump_inst_map_[bump.bump_inst] = &bump;
+    }
+  }
+  chip_path_map_[ptr->chip_inst_path] = ptr;
+
+  unfoldConnections(master, path);
+  unfoldNets(master, path);
+
+  path.pop_back();
+  return ptr;
+}
+
+void UnfoldedModel::unfoldRegions(UnfoldedChip& uf_chip,
+                                  dbChipInst* inst,
+                                  const dbTransform& transform)
+{
   for (auto* region_inst : inst->getRegions()) {
     auto side = region_inst->getChipRegion()->getSide();
     if (uf_chip.transform.isMirrorZ()) {
@@ -195,24 +221,10 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
         .region_inst = region_inst,
         .effective_side = side,
         .cuboid = region_inst->getChipRegion()->getCuboid()};
-    total.apply(uf_region.cuboid);
-    unfoldBumps(uf_region, total);
+    transform.apply(uf_region.cuboid);
+    unfoldBumps(uf_region, transform);
     uf_chip.regions.push_back(std::move(uf_region));
   }
-
-  unfolded_chips_.push_back(std::move(uf_chip));
-  UnfoldedChip* ptr = &unfolded_chips_.back();
-  for (auto& region : ptr->regions) {
-    region.parent_chip = ptr;
-    ptr->region_map[region.region_inst] = &region;
-    for (auto& bump : region.bumps) {
-      bump.parent_region = &region;
-      bump_inst_map_[bump.bump_inst] = &bump;
-    }
-  }
-  chip_path_map_[ptr->chip_inst_path] = ptr;
-  path.pop_back();
-  return ptr;
 }
 
 void UnfoldedModel::unfoldBumps(UnfoldedRegion& uf_region,
@@ -250,7 +262,7 @@ UnfoldedRegion* UnfoldedModel::findUnfoldedRegion(UnfoldedChip* chip,
   return it != chip->region_map.end() ? it->second : nullptr;
 }
 
-void UnfoldedModel::unfoldNetsAndConnections(
+void UnfoldedModel::unfoldConnections(
     dbChip* chip,
     const std::vector<dbChipInst*>& parent_path)
 {
@@ -274,7 +286,11 @@ void UnfoldedModel::unfoldNetsAndConnections(
       unfolded_connections_.push_back(uf_conn);
     }
   }
+}
 
+void UnfoldedModel::unfoldNets(dbChip* chip,
+                               const std::vector<dbChipInst*>& parent_path)
+{
   for (auto* net : chip->getChipNets()) {
     UnfoldedNet uf_net{.chip_net = net};
     for (uint32_t i = 0; i < net->getNumBumpInsts(); i++) {
@@ -287,11 +303,6 @@ void UnfoldedModel::unfoldNetsAndConnections(
       }
     }
     unfolded_nets_.push_back(std::move(uf_net));
-  }
-
-  for (auto* inst : chip->getChipInsts()) {
-    unfoldNetsAndConnections(inst->getMasterChip(),
-                             concatPath(parent_path, {inst}));
   }
 }
 
