@@ -545,28 +545,94 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
   odb::dbMarkerCategory* open_net_category
       = odb::dbMarkerCategory::createOrReplace(category, "OpenNet");
 
+  const auto& connections = model.getConnections();
+
   // For each net, check if all bumps are connected via valid physical paths.
-  // Uses UnfoldedNet::getDisconnectedBumps() which performs Union-Find analysis
-  // to identify bumps that are not physically connected to the main cluster.
   for (const auto& net : model.getNets()) {
     if (net.connected_bumps.size() < 2) {
       continue;
     }
 
-    auto disconnected = net.getDisconnectedBumps(
-        logger_, model.getConnections(), bump_pitch_tolerance);
-    if (!disconnected.empty()) {
-      odb::dbMarker* marker = odb::dbMarker::create(open_net_category);
-      marker->addSource(net.chip_net);
-      marker->setComment(
-          fmt::format("Net {} has {} disconnected bump(s) out of {} total.",
-                      net.chip_net->getName(),
-                      disconnected.size(),
-                      net.connected_bumps.size()));
+    utl::UnionFind uf(net.connected_bumps.size());
+    std::map<UnfoldedRegion*, std::vector<size_t>> bumps_by_region;
+    for (size_t i = 0; i < net.connected_bumps.size(); i++) {
+      bumps_by_region[net.connected_bumps[i]->parent_region].push_back(i);
+    }
 
-      for (auto* bump : disconnected) {
-        if (bump->bump_inst) {
-          marker->addSource(bump->bump_inst);
+    std::map<UnfoldedChip*, std::vector<UnfoldedRegion*>> regions_by_chip;
+    for (auto& [region, _] : bumps_by_region) {
+      regions_by_chip[region->parent_chip].push_back(region);
+    }
+
+    for (auto& [chip, regions] : regions_by_chip) {
+      size_t first_idx = bumps_by_region.at(regions[0])[0];
+      for (auto* region : regions) {
+        for (size_t idx : bumps_by_region.at(region)) {
+          uf.unite((int) first_idx, (int) idx);
+        }
+      }
+    }
+
+    for (const auto& conn : connections) {
+      if (!conn.isValid()) {
+        continue;
+      }
+      auto it1 = bumps_by_region.find(conn.top_region);
+      auto it2 = bumps_by_region.find(conn.bottom_region);
+
+      if (it1 != bumps_by_region.end() && it2 != bumps_by_region.end()) {
+        const auto& idxs1 = it1->second;
+        const auto& idxs2 = it2->second;
+        if (std::abs(net.connected_bumps[idxs1[0]]->global_position.z()
+                     - net.connected_bumps[idxs2[0]]->global_position.z())
+            <= conn.connection->getThickness()) {
+          for (size_t i1 : idxs1) {
+            for (size_t i2 : idxs2) {
+              const auto& p1 = net.connected_bumps[i1]->global_position;
+              const auto& p2 = net.connected_bumps[i2]->global_position;
+              if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
+                  && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
+                uf.unite((int) i1, (int) i2);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    std::map<int, std::vector<size_t>> groups;
+    for (size_t i = 0; i < net.connected_bumps.size(); i++) {
+      groups[uf.find((int) i)].push_back(i);
+    }
+
+    if (groups.size() > 1) {
+      auto max_group
+          = std::max_element(groups.begin(), groups.end(), [](auto& a, auto& b) {
+              return a.second.size() < b.second.size();
+            });
+
+      std::vector<UnfoldedBump*> disconnected;
+      for (auto& [root, indices] : groups) {
+        if (root != max_group->first) {
+          for (size_t idx : indices) {
+            disconnected.push_back(net.connected_bumps[idx]);
+          }
+        }
+      }
+
+      if (!disconnected.empty()) {
+        odb::dbMarker* marker = odb::dbMarker::create(open_net_category);
+        marker->addSource(net.chip_net);
+        marker->setComment(
+            fmt::format("Net {} has {} disconnected bump(s) out of {} total.",
+                        net.chip_net->getName(),
+                        disconnected.size(),
+                        net.connected_bumps.size()));
+
+        for (auto* bump : disconnected) {
+          if (bump->bump_inst) {
+            marker->addSource(bump->bump_inst);
+          }
         }
       }
     }

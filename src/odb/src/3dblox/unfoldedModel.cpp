@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <deque>
 #include <map>
-#include <ranges>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -16,7 +15,6 @@
 #include "odb/dbTransform.h"
 #include "odb/geom.h"
 #include "utl/Logger.h"
-#include "utl/unionFind.h"
 
 namespace {
 
@@ -136,86 +134,6 @@ bool UnfoldedChip::isParentOf(const UnfoldedChip* other) const
   return std::equal(chip_inst_path.begin(),
                     chip_inst_path.end(),
                     other->chip_inst_path.begin());
-}
-
-std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
-    utl::Logger* logger,
-    const std::deque<UnfoldedConnection>& connections,
-    int bump_pitch_tolerance) const
-{
-  if (connected_bumps.size() < 2) {
-    return {};
-  }
-
-  utl::UnionFind uf(connected_bumps.size());
-  std::map<UnfoldedRegion*, std::vector<size_t>> bumps_by_region;
-  for (size_t i = 0; i < connected_bumps.size(); i++) {
-    bumps_by_region[connected_bumps[i]->parent_region].push_back(i);
-  }
-
-  std::map<UnfoldedChip*, std::vector<UnfoldedRegion*>> regions_by_chip;
-  for (auto& [region, _] : bumps_by_region) {
-    regions_by_chip[region->parent_chip].push_back(region);
-  }
-
-  for (auto& [chip, regions] : regions_by_chip) {
-    size_t first_idx = bumps_by_region.at(regions[0])[0];
-    for (auto* region : regions) {
-      for (size_t idx : bumps_by_region.at(region)) {
-        uf.unite((int) first_idx, (int) idx);
-      }
-    }
-  }
-
-  for (const auto& conn : connections) {
-    if (!conn.isValid()) {
-      continue;
-    }
-    auto it1 = bumps_by_region.find(conn.top_region);
-    auto it2 = bumps_by_region.find(conn.bottom_region);
-
-    if (it1 != bumps_by_region.end() && it2 != bumps_by_region.end()) {
-      const auto& idxs1 = it1->second;
-      const auto& idxs2 = it2->second;
-      if (std::abs(connected_bumps[idxs1[0]]->global_position.z()
-                   - connected_bumps[idxs2[0]]->global_position.z())
-          <= conn.connection->getThickness()) {
-        for (size_t i1 : idxs1) {
-          for (size_t i2 : idxs2) {
-            const auto& p1 = connected_bumps[i1]->global_position;
-            const auto& p2 = connected_bumps[i2]->global_position;
-            if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
-                && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
-              uf.unite((int) i1, (int) i2);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  std::map<int, std::vector<size_t>> groups;
-  for (size_t i = 0; i < connected_bumps.size(); i++) {
-    groups[uf.find((int) i)].push_back(i);
-  }
-  if (groups.size() <= 1) {
-    return {};
-  }
-
-  auto max_group
-      = std::max_element(groups.begin(), groups.end(), [](auto& a, auto& b) {
-          return a.second.size() < b.second.size();
-        });
-
-  std::vector<UnfoldedBump*> disconnected;
-  for (auto& [root, indices] : groups) {
-    if (root != max_group->first) {
-      for (size_t idx : indices) {
-        disconnected.push_back(connected_bumps[idx]);
-      }
-    }
-  }
-  return disconnected;
 }
 
 UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip)

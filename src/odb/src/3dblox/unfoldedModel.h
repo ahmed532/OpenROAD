@@ -70,11 +70,6 @@ struct UnfoldedNet
 {
   dbChipNet* chip_net = nullptr;
   std::vector<UnfoldedBump*> connected_bumps{};
-
-  std::vector<UnfoldedBump*> getDisconnectedBumps(
-      utl::Logger* logger,
-      const std::deque<UnfoldedConnection>& connections,
-      int bump_pitch_tolerance) const;
 };
 
 struct UnfoldedChip
