@@ -94,11 +94,11 @@ class UnfoldedModel
   UnfoldedModel(utl::Logger* logger, dbChip* chip);
 
   const std::deque<UnfoldedChip>& getChips() const { return unfolded_chips_; }
-  const std::deque<UnfoldedConnection>& getConnections() const
+  const std::vector<UnfoldedConnection>& getConnections() const
   {
     return unfolded_connections_;
   }
-  const std::deque<UnfoldedNet>& getNets() const { return unfolded_nets_; }
+  const std::vector<UnfoldedNet>& getNets() const { return unfolded_nets_; }
 
  private:
   UnfoldedChip* buildUnfoldedChip(dbChipInst* chip_inst,
@@ -106,10 +106,8 @@ class UnfoldedModel
                                   const dbTransform& parent_xform,
                                   Cuboid& local_cuboid);
   void unfoldBumps(UnfoldedRegion& uf_region, const dbTransform& transform);
-  void unfoldConnectionsRecursive(dbChip* chip,
-                                  const std::vector<dbChipInst*>& parent_path);
-  void unfoldNetsRecursive(dbChip* chip,
-                           const std::vector<dbChipInst*>& parent_path);
+  void unfoldNetsAndConnections(dbChip* chip,
+                                const std::vector<dbChipInst*>& parent_path);
 
   UnfoldedChip* findUnfoldedChip(const std::vector<dbChipInst*>& path);
   UnfoldedRegion* findUnfoldedRegion(UnfoldedChip* chip,
@@ -117,8 +115,8 @@ class UnfoldedModel
 
   utl::Logger* logger_;
   std::deque<UnfoldedChip> unfolded_chips_;
-  std::deque<UnfoldedConnection> unfolded_connections_;
-  std::deque<UnfoldedNet> unfolded_nets_;
+  std::vector<UnfoldedConnection> unfolded_connections_;
+  std::vector<UnfoldedNet> unfolded_nets_;
   std::map<std::vector<dbChipInst*>, UnfoldedChip*> chip_path_map_;
   std::unordered_map<dbChipBumpInst*, UnfoldedBump*> bump_inst_map_;
 };

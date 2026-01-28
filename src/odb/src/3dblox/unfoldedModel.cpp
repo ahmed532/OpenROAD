@@ -144,8 +144,7 @@ UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip)
     Cuboid local;
     buildUnfoldedChip(inst, path, dbTransform(), local);
   }
-  unfoldConnectionsRecursive(chip, {});
-  unfoldNetsRecursive(chip, {});
+  unfoldNetsAndConnections(chip, {});
 }
 
 UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
@@ -251,7 +250,7 @@ UnfoldedRegion* UnfoldedModel::findUnfoldedRegion(UnfoldedChip* chip,
   return it != chip->region_map.end() ? it->second : nullptr;
 }
 
-void UnfoldedModel::unfoldConnectionsRecursive(
+void UnfoldedModel::unfoldNetsAndConnections(
     dbChip* chip,
     const std::vector<dbChipInst*>& parent_path)
 {
@@ -276,16 +275,6 @@ void UnfoldedModel::unfoldConnectionsRecursive(
     }
   }
 
-  for (auto* inst : chip->getChipInsts()) {
-    unfoldConnectionsRecursive(inst->getMasterChip(),
-                               concatPath(parent_path, {inst}));
-  }
-}
-
-void UnfoldedModel::unfoldNetsRecursive(
-    dbChip* chip,
-    const std::vector<dbChipInst*>& parent_path)
-{
   for (auto* net : chip->getChipNets()) {
     UnfoldedNet uf_net{.chip_net = net};
     for (uint32_t i = 0; i < net->getNumBumpInsts(); i++) {
@@ -299,8 +288,10 @@ void UnfoldedModel::unfoldNetsRecursive(
     }
     unfolded_nets_.push_back(std::move(uf_net));
   }
+
   for (auto* inst : chip->getChipInsts()) {
-    unfoldNetsRecursive(inst->getMasterChip(), concatPath(parent_path, {inst}));
+    unfoldNetsAndConnections(inst->getMasterChip(),
+                             concatPath(parent_path, {inst}));
   }
 }
 
