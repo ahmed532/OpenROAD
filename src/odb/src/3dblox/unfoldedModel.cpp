@@ -21,33 +21,6 @@
 
 namespace {
 
-bool isPathZFlipped(const std::vector<odb::dbChipInst*>& path)
-{
-  bool flipped = false;
-  for (auto inst : path) {
-    if (inst->getOrient().isMirrorZ()) {
-      flipped = !flipped;
-    }
-  }
-  return flipped;
-}
-
-odb::dbChipRegion::Side computeEffectiveSide(
-    odb::dbChipRegion::Side original,
-    const std::vector<odb::dbChipInst*>& path)
-{
-  if (!isPathZFlipped(path)) {
-    return original;
-  }
-  if (original == odb::dbChipRegion::Side::FRONT) {
-    return odb::dbChipRegion::Side::BACK;
-  }
-  if (original == odb::dbChipRegion::Side::BACK) {
-    return odb::dbChipRegion::Side::FRONT;
-  }
-  return original;
-}
-
 odb::dbTransform getTransform(odb::dbChipInst* inst)
 {
   int z = inst->getLoc().z();
@@ -59,22 +32,18 @@ odb::dbTransform getTransform(odb::dbChipInst* inst)
       odb::Point3D(inst->getLoc().x(), inst->getLoc().y(), z));
 }
 
-odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region)
+odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region, odb::dbTech* tech)
 {
-  odb::dbChip* chip = region->getChip();
-  odb::dbTech* tech = chip->getTech();
   if (!tech) {
-    if (auto prop = odb::dbStringProperty::find(chip, "3dblox_tech")) {
-      tech = chip->getDb()->findTech(prop->getValue().c_str());
-    }
+    return region->getCuboid();
   }
   odb::dbTechLayer* layer = region->getLayer();
-  if (!layer && tech) {
+  if (!layer) {
     if (auto prop = odb::dbStringProperty::find(region, "3dblox_layer")) {
       layer = tech->findLayer(prop->getValue().c_str());
     }
   }
-  if (!layer || !tech) {
+  if (!layer) {
     return region->getCuboid();
   }
 
@@ -95,10 +64,12 @@ odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region)
       layer->getThickness(target);
     }
   }
-  int z_top
-      = (region->getSide() == odb::dbChipRegion::Side::BACK)
-            ? (int) layer_z
-            : std::max(0, (int) chip->getThickness() - (int) (total - layer_z));
+
+  int z_top = (region->getSide() == odb::dbChipRegion::Side::BACK)
+                  ? (int) layer_z
+                  : std::max(0,
+                             (int) region->getChip()->getThickness()
+                                 - (int) (total - layer_z));
   odb::Rect box = region->getBox();
   return odb::Cuboid(box.xMin(),
                      box.yMin(),
@@ -114,13 +85,7 @@ namespace odb {
 
 int UnfoldedRegion::getSurfaceZ() const
 {
-  if (isFront()) {
-    return cuboid.zMax();
-  }
-  if (isBack()) {
-    return cuboid.zMin();
-  }
-  return cuboid.zCenter();
+  return isFront() ? cuboid.zMax() : (isBack() ? cuboid.zMin() : cuboid.zCenter());
 }
 
 bool UnfoldedConnection::isValid() const
@@ -283,43 +248,52 @@ std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
   return disconnected;
 }
 
-std::string UnfoldedChip::getName() const
-{
-  std::string name;
-  for (auto* inst : chip_inst_path) {
-    if (!name.empty()) {
-      name += '/';
-    }
-    name += inst->getName();
-  }
-  return name;
-}
-
 UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip)
     : logger_(logger)
 {
   for (dbChipInst* inst : chip->getChipInsts()) {
     std::vector<dbChipInst*> path;
     Cuboid local;
-    buildUnfoldedChip(inst, path, local);
+    buildUnfoldedChip(inst, path, dbTransform(), local);
   }
   unfoldConnectionsRecursive(chip, {});
-  unfoldNetsRecursive(chip);
+  unfoldNetsRecursive(chip, {});
 }
 
 UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
                                                std::vector<dbChipInst*>& path,
+                                               const dbTransform& parent_xform,
                                                Cuboid& local)
 {
   dbChip* master = inst->getMasterChip();
   path.push_back(inst);
-  UnfoldedChip uf_chip{.chip_inst_path = path};
+
+  dbTransform total = getTransform(inst);
+  total.concat(parent_xform);
+
+  std::string name;
+  for (auto* p : path) {
+    if (!name.empty()) {
+      name += '/';
+    }
+    name += p->getName();
+  }
+
+  dbTech* tech = master->getTech();
+  if (!tech) {
+    if (auto prop = odb::dbStringProperty::find(master, "3dblox_tech")) {
+      tech = master->getDb()->findTech(prop->getValue().c_str());
+    }
+  }
+
+  UnfoldedChip uf_chip{
+      .name = std::move(name), .tech = tech, .chip_inst_path = path};
 
   if (master->getChipType() == dbChip::ChipType::HIER) {
     uf_chip.cuboid.mergeInit();
     for (auto sub : master->getChipInsts()) {
       Cuboid sub_local;
-      buildUnfoldedChip(sub, path, sub_local);
+      buildUnfoldedChip(sub, path, total, sub_local);
       uf_chip.cuboid.merge(sub_local);
     }
   } else {
@@ -329,26 +303,29 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   local = uf_chip.cuboid;
   getTransform(inst).apply(local);
 
-  dbTransform total;
-  for (auto i : path | std::views::reverse) {
-    total.concat(getTransform(i), total);
-  }
   uf_chip.transform = total;
   total.apply(uf_chip.cuboid);
-  uf_chip.z_flipped = isPathZFlipped(path);
 
   for (auto* region_inst : inst->getRegions()) {
+    auto side = region_inst->getChipRegion()->getSide();
+    if (uf_chip.transform.isMirrorZ()) {
+      if (side == dbChipRegion::Side::FRONT) {
+        side = dbChipRegion::Side::BACK;
+      } else if (side == dbChipRegion::Side::BACK) {
+        side = dbChipRegion::Side::FRONT;
+      }
+    }
+
     UnfoldedRegion uf_region{
         .region_inst = region_inst,
-        .effective_side
-        = computeEffectiveSide(region_inst->getChipRegion()->getSide(), path),
-        .cuboid = getCorrectedCuboid(region_inst->getChipRegion())};
+        .effective_side = side,
+        .cuboid = getCorrectedCuboid(region_inst->getChipRegion(), tech)};
     total.apply(uf_region.cuboid);
     unfoldBumps(uf_region, total);
-    uf_chip.regions.push_back(uf_region);
+    uf_chip.regions.push_back(std::move(uf_region));
   }
 
-  unfolded_chips_.push_back(uf_chip);
+  unfolded_chips_.push_back(std::move(uf_chip));
   UnfoldedChip* ptr = &unfolded_chips_.back();
   for (auto& region : ptr->regions) {
     region.parent_chip = ptr;
@@ -436,21 +413,30 @@ void UnfoldedModel::unfoldConnectionsRecursive(
   }
 }
 
-void UnfoldedModel::unfoldNetsRecursive(dbChip* chip)
+void UnfoldedModel::unfoldNetsRecursive(
+    dbChip* chip,
+    const std::vector<dbChipInst*>& parent_path)
 {
   for (auto* net : chip->getChipNets()) {
     UnfoldedNet uf_net{.chip_net = net};
     for (uint32_t i = 0; i < net->getNumBumpInsts(); i++) {
-      std::vector<dbChipInst*> path;
-      auto it = bump_inst_map_.find(net->getBumpInst(i, path));
+      std::vector<dbChipInst*> rel_path;
+      dbChipBumpInst* b_inst = net->getBumpInst(i, rel_path);
+
+      auto full_path = parent_path;
+      full_path.insert(full_path.end(), rel_path.begin(), rel_path.end());
+
+      auto it = bump_inst_map_.find(b_inst);
       if (it != bump_inst_map_.end()) {
         uf_net.connected_bumps.push_back(it->second);
       }
     }
-    unfolded_nets_.push_back(uf_net);
+    unfolded_nets_.push_back(std::move(uf_net));
   }
   for (auto* inst : chip->getChipInsts()) {
-    unfoldNetsRecursive(inst->getMasterChip());
+    auto sub = parent_path;
+    sub.push_back(inst);
+    unfoldNetsRecursive(inst->getMasterChip(), sub);
   }
 }
 

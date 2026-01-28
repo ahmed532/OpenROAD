@@ -79,14 +79,15 @@ struct UnfoldedNet
 
 struct UnfoldedChip
 {
-  std::string getName() const;
+  std::string name;
+  dbTech* tech = nullptr;
+  const std::string& getName() const { return name; }
   bool isParentOf(const UnfoldedChip* other) const;
 
   std::vector<dbChipInst*> chip_inst_path;
   Cuboid cuboid{};
   dbTransform transform{};
 
-  bool z_flipped = false;
   std::deque<UnfoldedRegion> regions{};
 
   std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map{};
@@ -107,11 +108,13 @@ class UnfoldedModel
  private:
   UnfoldedChip* buildUnfoldedChip(dbChipInst* chip_inst,
                                   std::vector<dbChipInst*>& path,
+                                  const dbTransform& parent_xform,
                                   Cuboid& local_cuboid);
   void unfoldBumps(UnfoldedRegion& uf_region, const dbTransform& transform);
   void unfoldConnectionsRecursive(dbChip* chip,
                                   const std::vector<dbChipInst*>& parent_path);
-  void unfoldNetsRecursive(dbChip* chip);
+  void unfoldNetsRecursive(dbChip* chip,
+                           const std::vector<dbChipInst*>& parent_path);
 
   UnfoldedChip* findUnfoldedChip(const std::vector<dbChipInst*>& path);
   UnfoldedRegion* findUnfoldedRegion(UnfoldedChip* chip,
