@@ -39,7 +39,7 @@ struct UnfoldedRegion
   dbChipRegion::Side effective_side = dbChipRegion::Side::FRONT;
   Cuboid cuboid;
   UnfoldedChip* parent_chip = nullptr;
-  std::deque<UnfoldedBump> bumps{};
+  std::deque<UnfoldedBump> bumps;
   bool isUsed = false;
 
   int getSurfaceZ() const;
@@ -65,7 +65,7 @@ struct UnfoldedConnection
 struct UnfoldedNet
 {
   dbChipNet* chip_net = nullptr;
-  std::vector<UnfoldedBump*> connected_bumps{};
+  std::vector<UnfoldedBump*> connected_bumps;
 };
 
 struct UnfoldedChip
@@ -74,12 +74,12 @@ struct UnfoldedChip
   bool isParentOf(const UnfoldedChip* other) const;
 
   std::vector<dbChipInst*> chip_inst_path;
-  Cuboid cuboid{};
-  dbTransform transform{};
+  Cuboid cuboid;
+  dbTransform transform;
 
-  std::deque<UnfoldedRegion> regions{};
+  std::deque<UnfoldedRegion> regions;
 
-  std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map{};
+  std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map;
 };
 
 class UnfoldedModel

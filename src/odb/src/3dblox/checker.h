@@ -41,8 +41,8 @@ class Checker
   void checkLogical(dbChip* chip, dbMarkerCategory* category);
 
   bool getContactSurfaces(const UnfoldedConnection& conn,
-                          int& upper_z,
-                          int& lower_z) const;
+                          int& top_z,
+                          int& bot_z) const;
   bool isOverlapFullyInConnections(const UnfoldedModel& model,
                                    const UnfoldedChip* chip1,
                                    const UnfoldedChip* chip2,

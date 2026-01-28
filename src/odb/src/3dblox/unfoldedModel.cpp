@@ -4,6 +4,7 @@
 #include "unfoldedModel.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <string>
@@ -59,8 +60,13 @@ namespace odb {
 
 int UnfoldedRegion::getSurfaceZ() const
 {
-  return isFront() ? cuboid.zMax()
-                   : (isBack() ? cuboid.zMin() : cuboid.zCenter());
+  if (isFront()) {
+    return cuboid.zMax();
+  }
+  if (isBack()) {
+    return cuboid.zMin();
+  }
+  return cuboid.zCenter();
 }
 
 bool UnfoldedChip::isParentOf(const UnfoldedChip* other) const
@@ -97,9 +103,10 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   dbTransform total = inst_xform;
   total.concat(parent_xform);
 
-  UnfoldedChip uf_chip{.name = getFullPathName(path),
-                       .chip_inst_path = path,
-                       .transform = total};
+  UnfoldedChip uf_chip;
+  uf_chip.name = getFullPathName(path);
+  uf_chip.chip_inst_path = path;
+  uf_chip.transform = total;
 
   if (master->getChipType() == dbChip::ChipType::HIER) {
     uf_chip.cuboid.mergeInit();
@@ -153,10 +160,11 @@ void UnfoldedModel::unfoldRegions(UnfoldedChip& uf_chip,
       side = mirrorSide(side);
     }
 
-    UnfoldedRegion uf_region{
-        .region_inst = region_inst,
-        .effective_side = side,
-        .cuboid = region_inst->getChipRegion()->getCuboid()};
+    UnfoldedRegion uf_region;
+    uf_region.region_inst = region_inst;
+    uf_region.effective_side = side;
+    uf_region.cuboid = region_inst->getChipRegion()->getCuboid();
+
     transform.apply(uf_region.cuboid);
     unfoldBumps(uf_region, transform);
     uf_chip.regions.push_back(std::move(uf_region));
@@ -227,7 +235,8 @@ void UnfoldedModel::unfoldNets(dbChip* chip,
                                const std::vector<dbChipInst*>& parent_path)
 {
   for (auto* net : chip->getChipNets()) {
-    UnfoldedNet uf_net{.chip_net = net};
+    UnfoldedNet uf_net;
+    uf_net.chip_net = net;
     for (uint32_t i = 0; i < net->getNumBumpInsts(); i++) {
       std::vector<dbChipInst*> rel_path;
       dbChipBumpInst* b_inst = net->getBumpInst(i, rel_path);

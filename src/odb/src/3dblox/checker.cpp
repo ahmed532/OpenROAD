@@ -7,13 +7,21 @@
 #include <spdlog/fmt/ranges.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <numeric>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "odb/db.h"
+#include "odb/dbObject.h"
 #include "odb/geom.h"
 #include "sta/Network.hh"
 #include "sta/PatternMatch.hh"
@@ -127,16 +135,18 @@ void Checker::checkLogical(dbChip* chip, dbMarkerCategory* category)
     }
 
     auto* network = sta->network();
-    sta::Cell* top_cell = nullptr;
+    sta::Cell* cell = nullptr;
     auto* lib_iter = network->libraryIterator();
     while (lib_iter->hasNext()) {
-      if ((top_cell = network->findCell(lib_iter->next(), master->getName()))) {
+      auto* lib = lib_iter->next();
+      cell = network->findCell(lib, master->getName());
+      if (cell) {
         break;
       }
     }
     delete lib_iter;
 
-    if (!top_cell) {
+    if (!cell) {
       std::vector<std::string> modules;
       auto* li = network->libraryIterator();
       while (li->hasNext()) {
@@ -153,29 +163,28 @@ void Checker::checkLogical(dbChip* chip, dbMarkerCategory* category)
           "modules: {}",
           master->getName(),
           file,
-          modules.empty() ? "None"
-                          : fmt::format("{}", fmt::join(modules, ", ")));
+          modules.empty() ? "None" : fmt::format("{}", fmt::join(modules, ", ")));
       marker->setComment(msg);
       marker->addSource(master);
       logger_->warn(utl::ODB, 550, msg);
       continue;
     }
 
-    std::unordered_set<std::string_view> verilog_nets;
-    auto* port_iter = network->portBitIterator(top_cell);
+    std::unordered_set<std::string> verilog_nets;
+    auto* port_iter = network->portBitIterator(cell);
     while (port_iter->hasNext()) {
       verilog_nets.insert(network->name(port_iter->next()));
     }
     delete port_iter;
 
-    std::unordered_set<std::string_view> db_nets;
+    std::unordered_set<std::string> db_nets;
     for (auto* net : master->getChipNets()) {
       db_nets.insert(net->getName());
     }
 
     for (const auto& name : verilog_nets) {
       if (db_nets.insert(name).second) {
-        dbChipNet::create(master, std::string(name).c_str());
+        dbChipNet::create(master, name);
         debugPrint(logger_,
                    utl::ODB,
                    "3dblox",
@@ -212,8 +221,8 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
   const auto& chips = model.getChips();
   utl::UnionFind uf(chips.size());
   std::unordered_map<const UnfoldedChip*, int> chip_map;
-  for (int i = 0; i < (int) chips.size(); ++i) {
-    chip_map[&chips[i]] = i;
+  for (size_t i = 0; i < chips.size(); ++i) {
+    chip_map[&chips[i]] = (int) i;
   }
 
   for (const auto& conn : model.getConnections()) {
@@ -232,9 +241,9 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
     return chips[a].cuboid.xMin() < chips[b].cuboid.xMin();
   });
 
-  for (int i = 0; i < (int) sorted.size(); ++i) {
+  for (size_t i = 0; i < sorted.size(); ++i) {
     const auto& c1 = chips[sorted[i]].cuboid;
-    for (int j = i + 1; j < (int) sorted.size(); ++j) {
+    for (size_t j = i + 1; j < sorted.size(); ++j) {
       if (chips[sorted[j]].cuboid.xMin() > c1.xMax()) {
         break;
       }
@@ -245,8 +254,8 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
   }
 
   std::vector<std::vector<const UnfoldedChip*>> groups(chips.size());
-  for (int i = 0; i < (int) chips.size(); ++i) {
-    groups[uf.find(i)].push_back(&chips[i]);
+  for (size_t i = 0; i < chips.size(); ++i) {
+    groups[uf.find((int) i)].push_back(&chips[i]);
   }
   std::erase_if(groups, [](const auto& g) { return g.empty(); });
 
@@ -293,9 +302,9 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
   });
 
   std::vector<std::pair<const UnfoldedChip*, const UnfoldedChip*>> overlaps;
-  for (int i = 0; i < (int) sorted.size(); ++i) {
+  for (size_t i = 0; i < sorted.size(); ++i) {
     auto* c1 = &chips[sorted[i]];
-    for (int j = i + 1; j < (int) sorted.size(); ++j) {
+    for (size_t j = i + 1; j < sorted.size(); ++j) {
       auto* c2 = &chips[sorted[j]];
       if (c2->cuboid.xMin() >= c1->cuboid.xMax()) {
         break;
@@ -441,17 +450,17 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
     std::unordered_map<UnfoldedChip*, int> chip_rep;
     std::unordered_map<UnfoldedRegion*, std::vector<int>> region_bumps;
 
-    for (int i = 0; i < (int) net.connected_bumps.size(); ++i) {
+    for (size_t i = 0; i < net.connected_bumps.size(); ++i) {
       auto* b = net.connected_bumps[i];
-      if (!chip_rep.try_emplace(b->parent_region->parent_chip, i).second) {
-        uf.unite(i, chip_rep[b->parent_region->parent_chip]);
+      if (!chip_rep.try_emplace(b->parent_region->parent_chip, (int) i).second) {
+        uf.unite((int) i, chip_rep[b->parent_region->parent_chip]);
       }
-      region_bumps[b->parent_region].push_back(i);
+      region_bumps[b->parent_region].push_back((int) i);
     }
 
     for (const auto& conn : model.getConnections()) {
-      int t_z, b_z;
-      if (!getContactSurfaces(conn, t_z, b_z)) {
+      int top_z, bot_z;
+      if (!getContactSurfaces(conn, top_z, bot_z)) {
         continue;
       }
       auto it1 = region_bumps.find(conn.top_region);
@@ -460,7 +469,8 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
         continue;
       }
 
-      if (std::abs(t_z - b_z) <= conn.connection->getThickness()) {
+      // Surface distance check (Z)
+      if (std::abs(top_z - bot_z) <= conn.connection->getThickness()) {
         std::unordered_map<int64_t, int> xy_map;
         auto pack = [](const Point3D& p) {
           return (static_cast<int64_t>(p.x()) << 32)
@@ -493,8 +503,8 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
     }
 
     std::vector<std::vector<int>> groups(net.connected_bumps.size());
-    for (int i = 0; i < (int) net.connected_bumps.size(); ++i) {
-      groups[uf.find(i)].push_back(i);
+    for (size_t i = 0; i < net.connected_bumps.size(); ++i) {
+      groups[uf.find((int) i)].push_back((int) i);
     }
     std::erase_if(groups, [](const auto& g) { return g.empty(); });
 
@@ -598,7 +608,7 @@ bool Checker::getContactSurfaces(const UnfoldedConnection& conn,
 
 bool Checker::isValid(const UnfoldedConnection& conn) const
 {
-  int t_z, b_z;
+  int top_z, bot_z;
   if (!conn.top_region || !conn.bottom_region) {
     return true;
   }
@@ -617,13 +627,13 @@ bool Checker::isValid(const UnfoldedConnection& conn) const
     return true;
   }
 
-  if (!getContactSurfaces(conn, t_z, b_z)) {
+  if (!getContactSurfaces(conn, top_z, bot_z)) {
     return false;
   }
-  if (t_z < b_z) {
+  if (top_z < bot_z) {
     return false;
   }
-  return (t_z - b_z) <= conn.connection->getThickness();
+  return (top_z - bot_z) <= conn.connection->getThickness();
 }
 
 }  // namespace odb
