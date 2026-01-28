@@ -66,33 +66,40 @@ odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region, odb::dbTech* tech)
     return region->getCuboid();
   }
 
-  uint32_t total = 0, layer_z = 0, target = 0;
-  bool reached = false;
-  for (auto l : tech->getLayers()) {
-    uint32_t t = 0;
-    if ((l->getType() == odb::dbTechLayerType::ROUTING
-         || l->getType() == odb::dbTechLayerType::CUT)
-        && l->getThickness(t)) {
-      total += t;
-      if (!reached) {
-        layer_z += t;
-      }
+  uint32_t total = 0, layer_z = 0, target_thickness = 0;
+  for (auto* l : tech->getLayers()) {
+    if (l->getType() != odb::dbTechLayerType::ROUTING
+        && l->getType() != odb::dbTechLayerType::CUT) {
+      continue;
     }
+    uint32_t thickness = 0;
+    if (!l->getThickness(thickness)) {
+      continue;
+    }
+    total += thickness;
     if (l == layer) {
-      reached = true;
-      target = t;
+      target_thickness = thickness;
+      layer_z = total;
     }
   }
 
-  int z_top = (region->getSide() == odb::dbChipRegion::Side::BACK)
-                  ? (int) layer_z
-                  : std::max(0,
-                             (int) region->getChip()->getThickness()
-                                 - (int) (total - layer_z));
+  if (target_thickness == 0) {
+    return region->getCuboid();
+  }
+
+  const int chip_thickness = (int) region->getChip()->getThickness();
+  int z_top;
+  if (region->getSide() == odb::dbChipRegion::Side::BACK) {
+    z_top = (int) layer_z;
+  } else {
+    // FRONT or INTERNAL
+    z_top = std::max(0, chip_thickness - (int) (total - layer_z));
+  }
+
   odb::Rect box = region->getBox();
   return odb::Cuboid(box.xMin(),
                      box.yMin(),
-                     z_top - (int) target,
+                     z_top - (int) target_thickness,
                      box.xMax(),
                      box.yMax(),
                      z_top);
