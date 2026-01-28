@@ -60,8 +60,6 @@ struct UnfoldedConnection
   dbChipConn* connection = nullptr;
   UnfoldedRegion* top_region = nullptr;
   UnfoldedRegion* bottom_region = nullptr;
-  bool is_bterm_connection = false;
-  dbBTerm* bterm = nullptr;
 };
 
 struct UnfoldedNet
@@ -73,7 +71,6 @@ struct UnfoldedNet
 struct UnfoldedChip
 {
   std::string name;
-  const std::string& getName() const { return name; }
   bool isParentOf(const UnfoldedChip* other) const;
 
   std::vector<dbChipInst*> chip_inst_path;

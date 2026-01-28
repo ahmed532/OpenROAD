@@ -320,7 +320,7 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
         marker->addSource(inst->chip_inst_path.back());
       }
       marker->setComment("Isolated chip set starting with "
-                         + insts_set[0]->getName());
+                         + insts_set[0]->name);
     }
   }
 }
@@ -382,8 +382,8 @@ void Checker::checkOverlappingChips(const UnfoldedModel& model,
       marker->addSource(inst1->chip_inst_path.back());
       marker->addSource(inst2->chip_inst_path.back());
 
-      std::string comment = "Chips " + inst1->getName() + " and "
-                            + inst2->getName() + " overlap";
+      std::string comment = "Chips " + inst1->name + " and "
+                            + inst2->name + " overlap";
       marker->setComment(comment);
     }
   }
@@ -400,8 +400,7 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
   int non_intersecting_count = 0;
 
   for (const auto& conn : connections) {
-    bool has_missing_region = (!conn.top_region || !conn.bottom_region)
-                              && !conn.is_bterm_connection;
+    bool has_missing_region = (!conn.top_region || !conn.bottom_region);
 
     // Skip marker and warning for intentional virtual connections
     // If it's virtual in 3dblox, it will have a nullptr in the dbChipConn for
@@ -437,7 +436,7 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
                               conn.top_region->cuboid.yMax()));
         top_info = fmt::format(
             "{}/{} (faces {})",
-            conn.top_region->parent_chip->getName(),
+            conn.top_region->parent_chip->name,
             conn.top_region->region_inst->getChipRegion()->getName(),
             sideToString(conn.top_region->effective_side));
       }
@@ -449,7 +448,7 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
                               conn.bottom_region->cuboid.yMax()));
         bot_info = fmt::format(
             "{}/{} (faces {})",
-            conn.bottom_region->parent_chip->getName(),
+            conn.bottom_region->parent_chip->name,
             conn.bottom_region->region_inst->getChipRegion()->getName(),
             sideToString(conn.bottom_region->effective_side));
       }
@@ -746,7 +745,7 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
 
 bool Checker::isValid(const UnfoldedConnection& conn) const
 {
-  if (conn.is_bterm_connection || !conn.top_region || !conn.bottom_region) {
+  if (!conn.top_region || !conn.bottom_region) {
     return true;
   }
   if (!conn.top_region->cuboid.xyIntersects(conn.bottom_region->cuboid)) {
