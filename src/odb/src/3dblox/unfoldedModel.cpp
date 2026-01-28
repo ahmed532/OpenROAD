@@ -22,6 +22,9 @@ std::vector<odb::dbChipInst*> concatPath(
     const std::vector<odb::dbChipInst*>& head,
     const std::vector<odb::dbChipInst*>& tail)
 {
+  if (tail.empty()) {
+    return head;
+  }
   std::vector<odb::dbChipInst*> full = head;
   full.insert(full.end(), tail.begin(), tail.end());
   return full;
@@ -37,6 +40,17 @@ std::string getFullPathName(const std::vector<odb::dbChipInst*>& path)
     name += p->getName();
   }
   return name;
+}
+
+odb::dbChipRegion::Side mirrorSide(odb::dbChipRegion::Side side)
+{
+  if (side == odb::dbChipRegion::Side::FRONT) {
+    return odb::dbChipRegion::Side::BACK;
+  }
+  if (side == odb::dbChipRegion::Side::BACK) {
+    return odb::dbChipRegion::Side::FRONT;
+  }
+  return side;
 }
 
 }  // namespace
@@ -62,8 +76,8 @@ bool UnfoldedChip::isParentOf(const UnfoldedChip* other) const
 UnfoldedModel::UnfoldedModel(utl::Logger* logger, dbChip* chip)
     : logger_(logger)
 {
+  std::vector<dbChipInst*> path;
   for (dbChipInst* inst : chip->getChipInsts()) {
-    std::vector<dbChipInst*> path;
     Cuboid local;
     buildUnfoldedChip(inst, path, dbTransform(), local);
   }
@@ -135,12 +149,8 @@ void UnfoldedModel::unfoldRegions(UnfoldedChip& uf_chip,
 {
   for (auto* region_inst : inst->getRegions()) {
     auto side = region_inst->getChipRegion()->getSide();
-    if (uf_chip.transform.isMirrorZ()) {
-      if (side == dbChipRegion::Side::FRONT) {
-        side = dbChipRegion::Side::BACK;
-      } else if (side == dbChipRegion::Side::BACK) {
-        side = dbChipRegion::Side::FRONT;
-      }
+    if (transform.isMirrorZ()) {
+      side = mirrorSide(side);
     }
 
     UnfoldedRegion uf_region{
@@ -156,18 +166,17 @@ void UnfoldedModel::unfoldRegions(UnfoldedChip& uf_chip,
 void UnfoldedModel::unfoldBumps(UnfoldedRegion& uf_region,
                                 const dbTransform& transform)
 {
+  const int z = uf_region.getSurfaceZ();
   for (auto* bump_inst : uf_region.region_inst->getChipBumpInsts()) {
     dbChipBump* bump = bump_inst->getChipBump();
-    if (!bump->getInst()) {
-      continue;
+    if (auto* inst = bump->getInst()) {
+      Point global_xy = inst->getLocation();
+      transform.apply(global_xy);
+      uf_region.bumps.push_back(
+          {.bump_inst = bump_inst,
+           .parent_region = &uf_region,
+           .global_position = Point3D(global_xy.x(), global_xy.y(), z)});
     }
-    Point global_xy = bump->getInst()->getLocation();
-    transform.apply(global_xy);
-    uf_region.bumps.push_back(
-        {.bump_inst = bump_inst,
-         .parent_region = &uf_region,
-         .global_position
-         = Point3D(global_xy.x(), global_xy.y(), uf_region.getSurfaceZ())});
   }
 }
 
