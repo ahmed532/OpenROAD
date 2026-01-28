@@ -569,24 +569,21 @@ void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
                    chip_inst.name);
   }
   inst->setOrient(orient.value());
-  // Standard 3DBlox convention is that 'loc' refers to the origin (0,0) of
-  // the chiplet, not its bounding box lower-left.
-  // Since dbChipInst::setLoc follows the bounding box convention,
-  // we compensate to ensure origin_ == loc.
-  Point3D loc(chip_inst.loc.x * db_->getDbuPerMicron(),
-              chip_inst.loc.y * db_->getDbuPerMicron(),
-              chip_inst.z * db_->getDbuPerMicron());
   dbChip* master = inst->getMasterChip();
   Cuboid master_cuboid = master->getCuboid();
   dbTransform t(inst->getOrient());
   t.apply(master_cuboid);
 
+  // XY should be origin-based for hierarchical designs.
+  // Z should be "low-point" based (starts at loc.z) to avoid overlap in
+  // stacking.
   Point3D adjustment(master_cuboid.lll().x(),
                      master_cuboid.lll().y(),
                      master_cuboid.lll().z());
-  Point3D adjusted_loc(loc.x() + adjustment.x(),
-                       loc.y() + adjustment.y(),
-                       loc.z() + adjustment.z());
+  Point3D adjusted_loc(
+      chip_inst.loc.x * db_->getDbuPerMicron() + adjustment.x(),
+      chip_inst.loc.y * db_->getDbuPerMicron() + adjustment.y(),
+      chip_inst.z * db_->getDbuPerMicron());
   inst->setLoc(adjusted_loc);
 
   if (!chip_inst.external.verilog_file.empty()) {
