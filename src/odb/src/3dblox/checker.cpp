@@ -254,7 +254,7 @@ void Checker::checkFloatingChips(const UnfoldedModel& model,
   }
 
   for (const auto& conn : connections) {
-    if (conn.isValid() && conn.top_region && conn.bottom_region) {
+    if (isValid(conn) && conn.top_region && conn.bottom_region) {
       auto it_top = chip_to_idx.find(conn.top_region->parent_chip);
       auto it_bot = chip_to_idx.find(conn.bottom_region->parent_chip);
       if (it_top != chip_to_idx.end() && it_bot != chip_to_idx.end()) {
@@ -422,7 +422,7 @@ void Checker::checkConnectionRegions(const UnfoldedModel& model,
       continue;
     }
 
-    if (!conn.isValid()) {
+    if (!isValid(conn)) {
       odb::dbMarker* marker = odb::dbMarker::create(invalid_conn_category);
       marker->addSource(conn.connection);
 
@@ -574,7 +574,7 @@ void Checker::checkNetConnectivity(const UnfoldedModel& model,
     }
 
     for (const auto& conn : connections) {
-      if (!conn.isValid()) {
+      if (!isValid(conn)) {
         continue;
       }
       auto it1 = bumps_by_region.find(conn.top_region);
@@ -701,7 +701,7 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
     return true;
   }
   for (const auto& conn : model.getConnections()) {
-    if (!conn.isValid()) {
+    if (!isValid(conn)) {
       continue;
     }
 
@@ -742,6 +742,74 @@ bool Checker::isOverlapFullyInConnections(const UnfoldedModel& model,
   }
 
   return false;
+}
+
+bool Checker::isValid(const UnfoldedConnection& conn) const
+{
+  if (conn.is_bterm_connection || !conn.top_region || !conn.bottom_region) {
+    return true;
+  }
+  if (!conn.top_region->cuboid.xyIntersects(conn.bottom_region->cuboid)) {
+    return false;
+  }
+  if (conn.top_region->isInternalExt() || conn.bottom_region->isInternalExt()) {
+    return true;
+  }
+
+  const bool top_faces_down
+      = conn.top_region->isBack() || conn.top_region->isInternal();
+  const bool top_faces_up
+      = conn.top_region->isFront() || conn.top_region->isInternal();
+  const bool bot_faces_down
+      = conn.bottom_region->isBack() || conn.bottom_region->isInternal();
+  const bool bot_faces_up
+      = conn.bottom_region->isFront() || conn.bottom_region->isInternal();
+
+  bool standard_pair = top_faces_down && bot_faces_up;
+  bool inverted_pair = top_faces_up && bot_faces_down;
+  if (!standard_pair && !inverted_pair) {
+    return false;
+  }
+
+  const Cuboid& t_cub = conn.top_region->cuboid;
+  const Cuboid& b_cub = conn.bottom_region->cuboid;
+
+  if ((conn.top_region->isInternal() || conn.bottom_region->isInternal())
+      && std::max(t_cub.zMin(), b_cub.zMin())
+             <= std::min(t_cub.zMax(), b_cub.zMax())) {
+    return true;
+  }
+
+  int t_z = conn.top_region->getSurfaceZ();
+  int b_z = conn.bottom_region->getSurfaceZ();
+
+  if (standard_pair && inverted_pair && t_z < b_z) {
+    std::swap(standard_pair, inverted_pair);
+  }
+
+  if (standard_pair) {
+    if (conn.top_region->isInternal()) {
+      t_z = t_cub.zMin();
+    }
+    if (conn.bottom_region->isInternal()) {
+      b_z = b_cub.zMax();
+    }
+    if (t_z < b_z) {
+      return false;
+    }
+  } else {
+    if (conn.bottom_region->isInternal()) {
+      b_z = b_cub.zMin();
+    }
+    if (conn.top_region->isInternal()) {
+      t_z = t_cub.zMax();
+    }
+    if (b_z < t_z) {
+      return false;
+    }
+  }
+
+  return std::abs(t_z - b_z) <= conn.connection->getThickness();
 }
 
 }  // namespace odb

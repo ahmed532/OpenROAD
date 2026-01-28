@@ -48,6 +48,7 @@ class Checker
                                    const Cuboid& overlap) const;
   void checkBumpPhysicalAlignment(const UnfoldedModel& model,
                                   dbMarkerCategory* category);
+  bool isValid(const UnfoldedConnection& conn) const;
   utl::Logger* logger_;
 };
 

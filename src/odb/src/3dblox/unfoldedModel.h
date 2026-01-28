@@ -62,8 +62,6 @@ struct UnfoldedConnection
   UnfoldedRegion* bottom_region = nullptr;
   bool is_bterm_connection = false;
   dbBTerm* bterm = nullptr;
-
-  bool isValid() const;
 };
 
 struct UnfoldedNet
