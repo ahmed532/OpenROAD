@@ -14,7 +14,6 @@
 
 #include "odb/db.h"
 #include "odb/dbTransform.h"
-#include "odb/dbTypes.h"
 #include "odb/geom.h"
 #include "utl/Logger.h"
 #include "utl/unionFind.h"
@@ -51,58 +50,6 @@ std::string getFullPathName(const std::vector<odb::dbChipInst*>& path)
     name += p->getName();
   }
   return name;
-}
-
-odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region, odb::dbTech* tech)
-{
-  odb::dbTechLayer* layer = region->getLayer();
-  if (!layer && tech) {
-    if (auto prop = odb::dbStringProperty::find(region, "3dblox_layer")) {
-      layer = tech->findLayer(prop->getValue().c_str());
-    }
-  }
-
-  if (!layer || !tech) {
-    return region->getCuboid();
-  }
-
-  uint32_t total = 0, layer_z = 0, target_thickness = 0;
-  for (auto* l : tech->getLayers()) {
-    if (l->getType() != odb::dbTechLayerType::ROUTING
-        && l->getType() != odb::dbTechLayerType::CUT) {
-      continue;
-    }
-    uint32_t thickness = 0;
-    if (!l->getThickness(thickness)) {
-      continue;
-    }
-    total += thickness;
-    if (l == layer) {
-      target_thickness = thickness;
-      layer_z = total;
-    }
-  }
-
-  if (target_thickness == 0) {
-    return region->getCuboid();
-  }
-
-  const int chip_thickness = (int) region->getChip()->getThickness();
-  int z_top;
-  if (region->getSide() == odb::dbChipRegion::Side::BACK) {
-    z_top = (int) layer_z;
-  } else {
-    // FRONT or INTERNAL
-    z_top = std::max(0, chip_thickness - (int) (total - layer_z));
-  }
-
-  odb::Rect box = region->getBox();
-  return odb::Cuboid(box.xMin(),
-                     box.yMin(),
-                     z_top - (int) target_thickness,
-                     box.xMax(),
-                     box.yMax(),
-                     z_top);
 }
 
 }  // namespace
@@ -330,7 +277,7 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
     UnfoldedRegion uf_region{
         .region_inst = region_inst,
         .effective_side = side,
-        .cuboid = getCorrectedCuboid(region_inst->getChipRegion(), tech)};
+        .cuboid = region_inst->getChipRegion()->getCuboid()};
     total.apply(uf_region.cuboid);
     unfoldBumps(uf_region, total);
     uf_chip.regions.push_back(std::move(uf_region));

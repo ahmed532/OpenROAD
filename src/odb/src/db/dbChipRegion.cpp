@@ -232,13 +232,33 @@ dbTechLayer* dbChipRegion::getLayer() const
 {
   _dbChipRegion* obj = (_dbChipRegion*) this;
   dbChip* chip = (dbChip*) obj->getOwner();
-  if (chip->getBlock() == nullptr || chip->getBlock()->getTech() == nullptr
-      || obj->layer_ == 0) {
+
+  dbTech* tech = nullptr;
+  if (chip->getBlock() != nullptr) {
+    tech = chip->getBlock()->getTech();
+  }
+  if (tech == nullptr) {
+    tech = chip->getTech();
+  }
+
+  if (tech == nullptr) {
     return nullptr;
   }
 
-  _dbTech* tech = (_dbTech*) chip->getBlock()->getTech();
-  return (dbTechLayer*) tech->layer_tbl_->getPtr(obj->layer_);
+  dbTechLayer* layer = nullptr;
+  if (obj->layer_ != 0) {
+    _dbTech* _tech = (_dbTech*) tech;
+    layer = (dbTechLayer*) _tech->layer_tbl_->getPtr(obj->layer_);
+  }
+
+  if (layer == nullptr) {
+    if (auto prop = odb::dbStringProperty::find((dbChipRegion*) this,
+                                                "3dblox_layer")) {
+      layer = tech->findLayer(prop->getValue().c_str());
+    }
+  }
+
+  return layer;
 }
 
 dbChipRegion* dbChipRegion::create(dbChip* chip,
