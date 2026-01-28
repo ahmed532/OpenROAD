@@ -402,12 +402,6 @@ void ThreeDBlox::createRegion(const ChipletRegion& region, dbChip* chip)
     if (tech) {
       layer = tech->findLayer(region.layer.c_str());
     }
-    if (!layer) {
-      logger_->warn(utl::ODB,
-                    563,
-                    "3DBV Parser: Layer {} not found in tech.",
-                    region.layer);
-    }
   }
   dbTechLayer* layer_to_pass = (chip->getBlock() != nullptr) ? layer : nullptr;
   dbChipRegion* chip_region
@@ -466,14 +460,6 @@ void ThreeDBlox::createBump(const BumpMapEntry& entry,
   }
   auto bump = dbChipBump::create(chip_region, inst);
 
-  if (entry.port_name != "-" && !entry.port_name.empty()) {
-    odb::dbStringProperty::create(
-        bump, "logical_port", entry.port_name.c_str());
-  }
-  if (entry.net_name != "-" && !entry.net_name.empty()) {
-    odb::dbStringProperty::create(bump, "logical_net", entry.net_name.c_str());
-  }
-
   Rect bbox;
   inst->getMaster()->getPlacementBoundary(bbox);
   int x = (entry.x * db_->getDbuPerMicron()) - bbox.xCenter()
@@ -489,11 +475,13 @@ void ThreeDBlox::createBump(const BumpMapEntry& entry,
     net = block->findNet(entry.net_name.c_str());
     if (net == nullptr) {
       net = dbNet::create(block, entry.net_name.c_str());
-      logger_->info(utl::ODB,
-                    534,
-                    "Creating missing net {} for bump {}",
-                    entry.net_name,
-                    entry.bump_inst_name);
+      debugPrint(logger_,
+                 utl::ODB,
+                 "3dblox",
+                 1,
+                 "Creating missing net {} for bump {}",
+                 entry.net_name,
+                 entry.bump_inst_name);
     }
     bump->setNet(net);
     if (!inst->getITerms().empty()) {
@@ -505,11 +493,13 @@ void ThreeDBlox::createBump(const BumpMapEntry& entry,
     if (bterm == nullptr) {
       if (net != nullptr) {
         bterm = dbBTerm::create(net, entry.port_name.c_str());
-        logger_->info(utl::ODB,
-                      533,
-                      "Creating missing port {} for bump {}",
-                      entry.port_name,
-                      entry.bump_inst_name);
+        debugPrint(logger_,
+                   utl::ODB,
+                   "3dblox",
+                   1,
+                   "Creating missing port {} for bump {}",
+                   entry.port_name,
+                   entry.bump_inst_name);
       } else {
         logger_->warn(utl::ODB,
                       545,
