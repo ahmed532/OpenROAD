@@ -21,18 +21,48 @@
 
 namespace {
 
+std::vector<odb::dbChipInst*> concatPath(
+    const std::vector<odb::dbChipInst*>& head,
+    const std::vector<odb::dbChipInst*>& tail)
+{
+  std::vector<odb::dbChipInst*> full = head;
+  full.insert(full.end(), tail.begin(), tail.end());
+  return full;
+}
+
+odb::dbTech* getTech(odb::dbChip* chip)
+{
+  if (auto* tech = chip->getTech()) {
+    return tech;
+  }
+  if (auto prop = odb::dbStringProperty::find(chip, "3dblox_tech")) {
+    return chip->getDb()->findTech(prop->getValue().c_str());
+  }
+  return nullptr;
+}
+
+std::string getFullPathName(const std::vector<odb::dbChipInst*>& path)
+{
+  std::string name;
+  for (auto* p : path) {
+    if (!name.empty()) {
+      name += '/';
+    }
+    name += p->getName();
+  }
+  return name;
+}
+
 odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region, odb::dbTech* tech)
 {
-  if (!tech) {
-    return region->getCuboid();
-  }
   odb::dbTechLayer* layer = region->getLayer();
-  if (!layer) {
+  if (!layer && tech) {
     if (auto prop = odb::dbStringProperty::find(region, "3dblox_layer")) {
       layer = tech->findLayer(prop->getValue().c_str());
     }
   }
-  if (!layer) {
+
+  if (!layer || !tech) {
     return region->getCuboid();
   }
 
@@ -50,7 +80,7 @@ odb::Cuboid getCorrectedCuboid(odb::dbChipRegion* region, odb::dbTech* tech)
     }
     if (l == layer) {
       reached = true;
-      layer->getThickness(target);
+      target = t;
     }
   }
 
@@ -90,23 +120,25 @@ bool UnfoldedConnection::isValid() const
     return true;
   }
 
-  auto faces = [](UnfoldedRegion* r) {
-    return std::pair{r->isBack() || r->isInternal(),
-                     r->isFront() || r->isInternal()};
-  };
-  auto [t_down, t_up] = faces(top_region);
-  auto [b_down, b_up] = faces(bottom_region);
+  const bool top_faces_down = top_region->isBack() || top_region->isInternal();
+  const bool top_faces_up = top_region->isFront() || top_region->isInternal();
+  const bool bot_faces_down
+      = bottom_region->isBack() || bottom_region->isInternal();
+  const bool bot_faces_up
+      = bottom_region->isFront() || bottom_region->isInternal();
 
-  bool standard_pair = t_down && b_up;
-  bool inverted_pair = t_up && b_down;
+  bool standard_pair = top_faces_down && bot_faces_up;
+  bool inverted_pair = top_faces_up && bot_faces_down;
   if (!standard_pair && !inverted_pair) {
     return false;
   }
 
+  const Cuboid& t_cub = top_region->cuboid;
+  const Cuboid& b_cub = bottom_region->cuboid;
+
   if ((top_region->isInternal() || bottom_region->isInternal())
-      && std::max(top_region->cuboid.zMin(), bottom_region->cuboid.zMin())
-             <= std::min(top_region->cuboid.zMax(),
-                         bottom_region->cuboid.zMax())) {
+      && std::max(t_cub.zMin(), b_cub.zMin())
+             <= std::min(t_cub.zMax(), b_cub.zMax())) {
     return true;
   }
 
@@ -119,20 +151,20 @@ bool UnfoldedConnection::isValid() const
 
   if (standard_pair) {
     if (top_region->isInternal()) {
-      t_z = top_region->cuboid.zMin();
+      t_z = t_cub.zMin();
     }
     if (bottom_region->isInternal()) {
-      b_z = bottom_region->cuboid.zMax();
+      b_z = b_cub.zMax();
     }
     if (t_z < b_z) {
       return false;
     }
   } else {
     if (bottom_region->isInternal()) {
-      b_z = bottom_region->cuboid.zMin();
+      b_z = b_cub.zMin();
     }
     if (top_region->isInternal()) {
-      t_z = top_region->cuboid.zMax();
+      t_z = t_cub.zMax();
     }
     if (b_z < t_z) {
       return false;
@@ -173,14 +205,10 @@ std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
   }
 
   for (auto& [chip, regions] : regions_by_chip) {
-    int first = -1;
+    size_t first_idx = bumps_by_region.at(regions[0])[0];
     for (auto* region : regions) {
       for (size_t idx : bumps_by_region.at(region)) {
-        if (first == -1) {
-          first = (int) idx;
-        } else {
-          uf.unite(first, (int) idx);
-        }
+        uf.unite((int) first_idx, (int) idx);
       }
     }
   }
@@ -200,12 +228,10 @@ std::vector<UnfoldedBump*> UnfoldedNet::getDisconnectedBumps(
           <= conn.connection->getThickness()) {
         for (size_t i1 : idxs1) {
           for (size_t i2 : idxs2) {
-            if (std::abs(connected_bumps[i1]->global_position.x()
-                         - connected_bumps[i2]->global_position.x())
-                    <= bump_pitch_tolerance
-                && std::abs(connected_bumps[i1]->global_position.y()
-                            - connected_bumps[i2]->global_position.y())
-                       <= bump_pitch_tolerance) {
+            const auto& p1 = connected_bumps[i1]->global_position;
+            const auto& p2 = connected_bumps[i2]->global_position;
+            if (std::abs(p1.x() - p2.x()) <= bump_pitch_tolerance
+                && std::abs(p1.y() - p2.y()) <= bump_pitch_tolerance) {
               uf.unite((int) i1, (int) i2);
             }
           }
@@ -262,23 +288,10 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   dbTransform total = inst_xform;
   total.concat(parent_xform);
 
-  std::string name;
-  for (auto* p : path) {
-    if (!name.empty()) {
-      name += '/';
-    }
-    name += p->getName();
-  }
-
-  dbTech* tech = master->getTech();
-  if (!tech) {
-    if (auto prop = odb::dbStringProperty::find(master, "3dblox_tech")) {
-      tech = master->getDb()->findTech(prop->getValue().c_str());
-    }
-  }
+  dbTech* tech = getTech(master);
 
   UnfoldedChip uf_chip{
-      .name = std::move(name), .tech = tech, .chip_inst_path = path};
+      .name = getFullPathName(path), .tech = tech, .chip_inst_path = path};
 
   if (master->getChipType() == dbChip::ChipType::HIER) {
     uf_chip.cuboid.mergeInit();
@@ -371,17 +384,11 @@ void UnfoldedModel::unfoldConnectionsRecursive(
     const std::vector<dbChipInst*>& parent_path)
 {
   for (auto* conn : chip->getChipConns()) {
-    auto full_path = [&](const std::vector<dbChipInst*>& rel) {
-      auto full = parent_path;
-      full.insert(full.end(), rel.begin(), rel.end());
-      return full;
-    };
-
     UnfoldedRegion* top = findUnfoldedRegion(
-        findUnfoldedChip(full_path(conn->getTopRegionPath())),
+        findUnfoldedChip(concatPath(parent_path, conn->getTopRegionPath())),
         conn->getTopRegion());
     UnfoldedRegion* bot = findUnfoldedRegion(
-        findUnfoldedChip(full_path(conn->getBottomRegionPath())),
+        findUnfoldedChip(concatPath(parent_path, conn->getBottomRegionPath())),
         conn->getBottomRegion());
 
     if (top || bot) {
@@ -398,9 +405,8 @@ void UnfoldedModel::unfoldConnectionsRecursive(
   }
 
   for (auto* inst : chip->getChipInsts()) {
-    auto sub = parent_path;
-    sub.push_back(inst);
-    unfoldConnectionsRecursive(inst->getMasterChip(), sub);
+    unfoldConnectionsRecursive(inst->getMasterChip(),
+                               concatPath(parent_path, {inst}));
   }
 }
 
@@ -414,9 +420,6 @@ void UnfoldedModel::unfoldNetsRecursive(
       std::vector<dbChipInst*> rel_path;
       dbChipBumpInst* b_inst = net->getBumpInst(i, rel_path);
 
-      auto full_path = parent_path;
-      full_path.insert(full_path.end(), rel_path.begin(), rel_path.end());
-
       auto it = bump_inst_map_.find(b_inst);
       if (it != bump_inst_map_.end()) {
         uf_net.connected_bumps.push_back(it->second);
@@ -425,9 +428,7 @@ void UnfoldedModel::unfoldNetsRecursive(
     unfolded_nets_.push_back(std::move(uf_net));
   }
   for (auto* inst : chip->getChipInsts()) {
-    auto sub = parent_path;
-    sub.push_back(inst);
-    unfoldNetsRecursive(inst->getMasterChip(), sub);
+    unfoldNetsRecursive(inst->getMasterChip(), concatPath(parent_path, {inst}));
   }
 }
 
