@@ -79,15 +79,17 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
   dbChip* master = inst->getMasterChip();
   path.push_back(inst);
 
-  dbTransform inst_xform = inst->getTransform();
+  const dbTransform inst_xform = inst->getTransform();
   dbTransform total = inst_xform;
   total.concat(parent_xform);
 
-  UnfoldedChip uf_chip{.name = getFullPathName(path), .chip_inst_path = path};
+  UnfoldedChip uf_chip{.name = getFullPathName(path),
+                       .chip_inst_path = path,
+                       .transform = total};
 
   if (master->getChipType() == dbChip::ChipType::HIER) {
     uf_chip.cuboid.mergeInit();
-    for (auto sub : master->getChipInsts()) {
+    for (auto* sub : master->getChipInsts()) {
       Cuboid sub_local;
       buildUnfoldedChip(sub, path, total, sub_local);
       uf_chip.cuboid.merge(sub_local);
@@ -96,13 +98,13 @@ UnfoldedChip* UnfoldedModel::buildUnfoldedChip(dbChipInst* inst,
     uf_chip.cuboid = master->getCuboid();
   }
 
+  // Calculate cuboid in parent space for hierarchical merging
   local = uf_chip.cuboid;
   inst_xform.apply(local);
 
-  uf_chip.transform = total;
-  total.apply(uf_chip.cuboid);
-
-  unfoldRegions(uf_chip, inst, total);
+  // Transform cuboid to global space
+  uf_chip.transform.apply(uf_chip.cuboid);
+  unfoldRegions(uf_chip, inst, uf_chip.transform);
 
   unfolded_chips_.push_back(std::move(uf_chip));
   registerUnfoldedChip(unfolded_chips_.back());
