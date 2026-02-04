@@ -96,10 +96,10 @@ void ThreeDBlox::readDbx(const std::string& dbx_file)
   calculateSize(chip);
 }
 
-void ThreeDBlox::check()
+void ThreeDBlox::check(int bump_pitch_tolerance)
 {
   Checker checker(logger_);
-  checker.check(db_->getChip());
+  checker.check(db_->getChip(), bump_pitch_tolerance);
 }
 
 namespace {
@@ -427,8 +427,6 @@ void ThreeDBlox::createRegion(const ChipletRegion& region, dbChip* chip)
       layer = tech->findLayer(region.layer.c_str());
     }
   }
-  dbChipRegion* chip_region = dbChipRegion::create(
-      chip, region.name, getChipRegionSide(region.side, logger_), layer);
   Rect box;
   box.mergeInit();
   for (const auto& coord : region.coords) {
@@ -542,15 +540,8 @@ dbChip* ThreeDBlox::createDesignTopChiplet(const DesignDef& design)
     if (odb::dbProperty::find(chip, "verilog_file") == nullptr) {
       odb::dbStringProperty::create(
           chip, "verilog_file", design.external.verilog_file.c_str());
-    }
   }
   db_->setTopChip(chip);
-  return chip;
-}
-
-void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
-{
-  auto chip = db_->findChip(chip_inst.reference.c_str());
   if (chip == nullptr) {
     logger_->error(utl::ODB,
                    519,

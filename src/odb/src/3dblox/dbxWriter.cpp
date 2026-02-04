@@ -9,6 +9,7 @@
 #include "baseWriter.h"
 #include "odb/db.h"
 #include "odb/geom.h"
+#include "odb/dbTransform.h"
 #include "utl/Logger.h"
 #include "yaml-cpp/yaml.h"
 

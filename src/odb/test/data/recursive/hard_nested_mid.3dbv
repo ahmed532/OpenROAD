@@ -1,0 +1,12 @@
+
+Header:
+  version: 2.5
+  unit: micron
+  precision: 2000
+  include:
+    - hard_nested_mid.3dbx
+
+ChipletDef:
+  HardNestedMid:
+    type: hier
+    design_area: [1000, 1000]

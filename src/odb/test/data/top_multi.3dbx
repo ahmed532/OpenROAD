@@ -1,0 +1,38 @@
+
+Header:
+  version: 2.5
+  unit: micron
+  precision: 2000
+  include:
+    - mid_multi.3dbv
+
+Design:
+  name: TopMulti
+
+ChipletInst:
+  I1:
+    reference: MidMulti
+  I2:
+    reference: MidMulti
+
+Stack:
+  I1:
+    loc: [0, 0]
+    z: 0
+    orient: R0
+  I2:
+    loc: [0, 0]
+    z: 100
+    orient: R0
+
+Connection:
+  c1:
+    top: I2.regions.BackR
+    bot: I1.regions.FrontR
+    thickness: 0
+
+Net:
+  - name: N1
+    path:
+      - I1/BT
+      - I2/BB
