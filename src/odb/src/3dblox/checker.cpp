@@ -37,16 +37,16 @@ namespace {
 
 constexpr int kBumpMarkerHalfSize = 50;
 
-const char* sideToString(dbChipRegion::Side side)
+const char* sideToString(UnfoldedRegionSide side)
 {
   switch (side) {
-    case dbChipRegion::Side::FRONT:
-      return "FRONT";
-    case dbChipRegion::Side::BACK:
-      return "BACK";
-    case dbChipRegion::Side::INTERNAL:
+    case UnfoldedRegionSide::TOP:
+      return "TOP";
+    case UnfoldedRegionSide::BOTTOM:
+      return "BOTTOM";
+    case UnfoldedRegionSide::INTERNAL:
       return "INTERNAL";
-    case dbChipRegion::Side::INTERNAL_EXT:
+    case UnfoldedRegionSide::INTERNAL_EXT:
       return "INTERNAL_EXT";
   }
   return "UNKNOWN";
@@ -588,8 +588,8 @@ bool Checker::getContactSurfaces(const UnfoldedConnection& conn,
     return false;
   }
 
-  auto up = [](auto* r) { return r->isFront() || r->isInternal(); };
-  auto down = [](auto* r) { return r->isBack() || r->isInternal(); };
+  auto up = [](auto* r) { return r->isTop() || r->isInternal(); };
+  auto down = [](auto* r) { return r->isBottom() || r->isInternal(); };
 
   bool r1_down_r2_up = down(r1) && up(r2);
   bool r1_up_r2_down = up(r1) && down(r2);

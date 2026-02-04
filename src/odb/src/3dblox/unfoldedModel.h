@@ -88,6 +88,18 @@ struct UnfoldedChip
   std::deque<UnfoldedRegion> regions;
 
   std::unordered_map<dbChipRegionInst*, UnfoldedRegion*> region_map;
+  bool isParentOf(const UnfoldedChip* other) const
+  {
+    if (other->chip_inst_path.size() <= chip_inst_path.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < chip_inst_path.size(); ++i) {
+      if (other->chip_inst_path[i] != chip_inst_path[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
 };
 
 class UnfoldedModel

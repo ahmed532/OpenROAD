@@ -1,6 +1,6 @@
 Header:
   version: 2.0
-  include: [chiplets.3dbv]
+  include: [chiplets.3dbv, host.3dbv]
 Design:
   name: TopDesign
 ChipletInst:
@@ -16,9 +16,9 @@ Stack:
     root: true
   ChipC_Inst:
     loc: [150, 150]
-    z: 100185
+    z: 100095
     orient: R0
 Connection:
   Conn_from_Below:
     top: ChipC_Inst.regions.TopSurface
-    bot: Host_Inst.regions.InternalReg
+    bot: Host_Inst/Guest_Inst.regions.InternalReg

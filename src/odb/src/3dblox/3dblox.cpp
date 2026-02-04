@@ -421,12 +421,14 @@ static dbChipRegion::Side getChipRegionSide(const std::string& side,
 void ThreeDBlox::createRegion(const ChipletRegion& region, dbChip* chip)
 {
   dbTechLayer* layer = nullptr;
-  if (!region.layer.empty()) {
+  if (!region.layer.empty() && chip->getChipType() != dbChip::ChipType::HIER) {
     dbTech* tech = chip->getTech();
     if (tech) {
       layer = tech->findLayer(region.layer.c_str());
     }
   }
+  dbChipRegion* chip_region = dbChipRegion::create(
+      chip, region.name, getChipRegionSide(region.side, logger_), layer);
   Rect box;
   box.mergeInit();
   for (const auto& coord : region.coords) {
@@ -540,8 +542,15 @@ dbChip* ThreeDBlox::createDesignTopChiplet(const DesignDef& design)
     if (odb::dbProperty::find(chip, "verilog_file") == nullptr) {
       odb::dbStringProperty::create(
           chip, "verilog_file", design.external.verilog_file.c_str());
+    }
   }
   db_->setTopChip(chip);
+  return chip;
+}
+
+void ThreeDBlox::createChipInst(const ChipletInst& chip_inst)
+{
+  auto chip = db_->findChip(chip_inst.reference.c_str());
   if (chip == nullptr) {
     logger_->error(utl::ODB,
                    519,
@@ -564,11 +573,10 @@ dbChip* ThreeDBlox::createDesignTopChiplet(const DesignDef& design)
                    chip_inst.name);
   }
   inst->setOrient(orient.value());
-  inst->setLoc(Point3D{
+  inst->setLoc(Point3D(
       static_cast<int>(chip_inst.loc.x * db_->getDbuPerMicron()),
       static_cast<int>(chip_inst.loc.y * db_->getDbuPerMicron()),
-      static_cast<int>(chip_inst.z * db_->getDbuPerMicron()),
-  });
+      static_cast<int>(chip_inst.z * db_->getDbuPerMicron())));
 }
 static std::vector<std::string> splitPath(const std::string& path)
 {

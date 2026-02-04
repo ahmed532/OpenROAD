@@ -2,17 +2,13 @@ Header:
   version: 2.0
   unit: micron
   precision: 1000
+  include: []
 
 ChipletDef:
-  Host:
+  Host_Base:
     type: hier
     thickness: 200
     design_area: [1000, 1000]
-    regions:
-      InternalReg:
-        side: internal
-        coords: [[100, 100], [200, 100], [200, 200], [100, 200]]
-        layer: M1
     external:
       APR_tech_file: [tech.lef]
 
@@ -23,6 +19,10 @@ ChipletDef:
     regions:
       Surface:
         side: front
+        coords: [[0, 0], [100, 0], [100, 100], [0, 100]]
+        layer: M1
+      InternalReg:
+        side: internal
         coords: [[0, 0], [100, 0], [100, 100], [0, 100]]
         layer: M1
     external:
