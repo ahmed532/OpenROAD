@@ -7254,6 +7254,16 @@ class dbChip : public dbObject
 
   bool isTsv() const;
 
+  ///
+  /// Mark this chip as a blackbox (no internal routing detail available).
+  /// During the blackbox stage all intra-chiplet regions are assumed to be
+  /// internally connected, so the routing graph adds a complete clique
+  /// across all regions of a blackbox chip.
+  ///
+  void setIsBlackbox(bool blackbox);
+
+  bool isBlackbox() const;
+
   dbSet<dbChipRegion> getChipRegions() const;
 
   dbSet<dbMarkerCategory> getMarkerCategories() const;

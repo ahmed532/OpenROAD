@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <map>
 #include <vector>
 
 #include "odb/3dblox.h"
@@ -21,13 +22,16 @@ class CheckerFixture : public tst::Fixture
     top_chip_
         = dbChip::create(db_.get(), nullptr, "TopChip", dbChip::ChipType::HIER);
 
-    // Create master chips
+    // Create master chips (blackbox: no DEF loaded, so all regions within each
+    // chip are assumed internally connected per the blackbox-stage spec).
     chip1_ = dbChip::create(db_.get(), tech_, "Chip1", dbChip::ChipType::DIE);
+    chip1_->setIsBlackbox(true);
     chip1_->setWidth(2000);
     chip1_->setHeight(2000);
     chip1_->setThickness(500);
 
     chip2_ = dbChip::create(db_.get(), tech_, "Chip2", dbChip::ChipType::DIE);
+    chip2_->setIsBlackbox(true);
     chip2_->setWidth(1500);
     chip2_->setHeight(1500);
     chip2_->setThickness(500);
@@ -46,10 +50,11 @@ class CheckerFixture : public tst::Fixture
     r2_fr->setBox(Rect(0, 0, 1500, 1500));
   }
 
-  void check()
+  void check(const std::map<std::string, PathAssertion>& assertions = {})
   {
     db_->setTopChip(top_chip_);
     ThreeDBlox three_dblox(&logger_, db_.get());
+    three_dblox.setPathAssertions(assertions);
     three_dblox.check();
   }
 
@@ -85,6 +90,7 @@ class CheckerFixture : public tst::Fixture
   static constexpr const char* logical_connectivity_category
       = "Logical Connectivity";
   static constexpr const char* bump_alignment_category = "Bump Alignment";
+  static constexpr const char* path_assertions_category = "Path Assertions";
 };
 
 }  // namespace odb

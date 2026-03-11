@@ -3,6 +3,10 @@
 
 #include "dbxParser.h"
 
+#include <yaml-cpp/exceptions.h>
+#include <yaml-cpp/node/node.h>
+#include <yaml-cpp/node/parse.h>
+
 #include <exception>
 #include <fstream>
 #include <map>
@@ -14,7 +18,6 @@
 #include "odb/3dblox.h"
 #include "odb/db.h"
 #include "utl/Logger.h"
-#include "yaml-cpp/yaml.h"
 
 namespace odb {
 
@@ -240,8 +243,6 @@ void DbxParser::parseConnection(Connection& connection,
 void DbxParser::parsePaths(std::map<std::string, PathAssertion>& paths,
                            const YAML::Node& paths_node)
 {
-  paths.clear();
-
   for (const auto& path_pair : paths_node) {
     PathAssertion path;
     try {

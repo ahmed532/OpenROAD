@@ -91,6 +91,9 @@ bool _dbChip::operator==(const _dbChip& rhs) const
   if (tsv_ != rhs.tsv_) {
     return false;
   }
+  if (blackbox_ != rhs.blackbox_) {
+    return false;
+  }
   if (top_ != rhs.top_) {
     return false;
   }
@@ -132,11 +135,7 @@ bool _dbChip::operator==(const _dbChip& rhs) const
 
 bool _dbChip::operator<(const _dbChip& rhs) const
 {
-  if (top_ >= rhs.top_) {
-    return false;
-  }
-
-  return true;
+  return top_ < rhs.top_;
 }
 
 _dbChip::_dbChip(_dbDatabase* db)
@@ -157,6 +156,7 @@ _dbChip::_dbChip(_dbDatabase* db)
   scribe_line_north_ = 0;
   scribe_line_south_ = 0;
   tsv_ = false;
+  blackbox_ = false;
   prop_tbl_ = new dbTable<_dbProperty>(
       db, this, (GetObjTbl_t) &_dbChip::getObjectTable, dbPropertyObj);
   chip_region_tbl_ = new dbTable<_dbChipRegion>(
@@ -225,6 +225,9 @@ dbIStream& operator>>(dbIStream& stream, _dbChip& obj)
   if (obj.getDatabase()->isSchema(kSchemaChipExtended)) {
     stream >> obj.tsv_;
   }
+  if (obj.getDatabase()->isSchema(kSchemaChipBlackbox)) {
+    stream >> obj.blackbox_;
+  }
   stream >> obj.top_;
   if (obj.getDatabase()->isSchema(kSchemaChipInst)) {
     stream >> obj.chipinsts_;
@@ -282,6 +285,7 @@ dbOStream& operator<<(dbOStream& stream, const _dbChip& obj)
   stream << obj.scribe_line_north_;
   stream << obj.scribe_line_south_;
   stream << obj.tsv_;
+  stream << obj.blackbox_;
   stream << obj.top_;
   stream << obj.chipinsts_;
   stream << obj.conns_;
@@ -547,6 +551,18 @@ bool dbChip::isTsv() const
 {
   _dbChip* obj = (_dbChip*) this;
   return obj->tsv_;
+}
+
+void dbChip::setIsBlackbox(bool blackbox)
+{
+  _dbChip* obj = (_dbChip*) this;
+  obj->blackbox_ = blackbox;
+}
+
+bool dbChip::isBlackbox() const
+{
+  _dbChip* obj = (_dbChip*) this;
+  return obj->blackbox_;
 }
 
 dbSet<dbChipRegion> dbChip::getChipRegions() const

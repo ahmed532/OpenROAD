@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <map>
+#include <string>
+
+#include "odb/3dblox.h"
 #include "odb/db.h"
 #include "odb/unfoldedModel.h"
 #include "utl/Logger.h"
@@ -27,7 +31,8 @@ class Checker
  public:
   Checker(utl::Logger* logger);
   ~Checker() = default;
-  void check(dbChip* chip);
+  void check(dbChip* chip,
+             const std::map<std::string, PathAssertion>& path_assertions);
 
  private:
   void checkLogicalConnectivity(dbMarkerCategory* top_cat,
@@ -42,8 +47,10 @@ class Checker
                               const UnfoldedModel& model);
   void checkBumpPhysicalAlignment(dbMarkerCategory* top_cat,
                                   const UnfoldedModel& model);
-  void checkNetConnectivity(dbMarkerCategory* top_cat,
-                            const UnfoldedModel& model);
+  void checkPathAssertions(
+      dbMarkerCategory* top_cat,
+      const UnfoldedModel& model,
+      const std::map<std::string, PathAssertion>& path_assertions);
   utl::Logger* logger_;
 };
 

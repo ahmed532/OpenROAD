@@ -36,8 +36,9 @@ struct BumpMapEntry;
 struct DbxData;
 struct PathAssertionEntry
 {
-  std::string region;    // e.g. "HBM_1.regions.r1"
+  std::string region;    // e.g. "HBM_1.regions.r1" — kept for diagnostics
   bool negated = false;  // true when prefixed with "NOT"
+  dbChipRegionInst* region_inst = nullptr;  // resolved by readDbx
 };
 
 struct PathAssertion
@@ -56,6 +57,8 @@ class ThreeDBlox
   void readBMap(const std::string& bmap_file);
   void check();
   const std::map<std::string, PathAssertion>& getPathAssertions() const;
+  void setPathAssertions(
+      const std::map<std::string, PathAssertion>& path_assertions);
   void writeDbv(const std::string& dbv_file, odb::dbChip* chip);
   void writeDbx(const std::string& dbx_file, odb::dbChip* chip);
   void writeBMap(const std::string& bmap_file, odb::dbChipRegion* region);
@@ -71,6 +74,7 @@ class ThreeDBlox
                                           dbBlock* block);
   dbChipRegionInst* resolvePath(const std::string& path,
                                 std::vector<dbChipInst*>& path_insts);
+  void resolvePathAssertions();
   void readHeaderIncludes(const std::vector<std::string>& includes);
   void calculateSize(dbChip* chip);
   void buildChipNetsFromVerilog(dbChip* chip, const DbxData& data);
